@@ -3,8 +3,8 @@ import {
   mockProviderRentals,
   mockTransitRoutes,
   mockVehicles,
-} from '../data/mockData';
-import { supabase } from './supabase';
+} from '../data-layer/mockData';
+import { supabase } from '../data-layer/supabaseClient';
 
 function fallbackWarn(tableName, error) {
   console.warn(`Supabase read failed for table "${tableName}". Using mock data.`, error?.message || error);
