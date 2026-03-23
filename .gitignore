@@ -10,3 +10,5 @@ npm-debug.*
 *.orig.*
 *.tsbuildinfo
 .DS_Store
+.env
+.env.local
