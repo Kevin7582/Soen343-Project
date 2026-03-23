@@ -1,7 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AuthProvider, ROLES, useAuth } from './context/AuthContext';
-import { RentalProvider, useRental } from './context/RentalContext';
-import { fetchParkingSpots, fetchProviderRentals, fetchTransitRoutes, fetchVehicles } from './services/database';
+import { AuthProvider, ROLES, useAuth } from '../context/AuthContext';
+import { RentalProvider, useRental } from '../context/RentalContext';
+import {
+  fetchParkingSpots,
+  fetchProviderRentals,
+  fetchTransitRoutes,
+  fetchVehicles,
+} from '../../service-layer/mobilityService';
 
 const CITIZEN_TABS = ['home', 'search', 'transit', 'parking', 'activeRental', 'profile'];
 const PROVIDER_TABS = ['home', 'vehicles', 'rentalData', 'profile'];
