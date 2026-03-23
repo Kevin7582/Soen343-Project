@@ -1,7 +1,12 @@
-import React, { useMemo, useState } from 'react';
-import { AuthProvider, ROLES, useAuth } from './context/AuthContext';
-import { RentalProvider, useRental } from './context/RentalContext';
-import { mockParkingSpots, mockProviderRentals, mockTransitRoutes, mockVehicles } from './data/mockData';
+import React, { useEffect, useMemo, useState } from 'react';
+import { AuthProvider, ROLES, useAuth } from '../context/AuthContext';
+import { RentalProvider, useRental } from '../context/RentalContext';
+import {
+  fetchParkingSpots,
+  fetchProviderRentals,
+  fetchTransitRoutes,
+  fetchVehicles,
+} from '../../service-layer/mobilityService';
 
 const CITIZEN_TABS = ['home', 'search', 'transit', 'parking', 'activeRental', 'profile'];
 const PROVIDER_TABS = ['home', 'vehicles', 'rentalData', 'profile'];
@@ -18,7 +23,8 @@ export default function App() {
 }
 
 function Root() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, authLoading } = useAuth();
+  if (authLoading) return <div className="auth-wrap"><div className="auth-card">Loading...</div></div>;
   return <div className="app-shell">{isAuthenticated ? <Dashboard /> : <AuthScreen />}</div>;
 }
 
@@ -29,25 +35,34 @@ function AuthScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState(ROLES.CITIZEN);
+  const [submitting, setSubmitting] = useState(false);
 
-  const submit = (event) => {
+  const submit = async (event) => {
     event.preventDefault();
     if (!email.trim() || !password.trim() || (mode === 'register' && !name.trim())) {
       window.alert('Please fill all required fields.');
       return;
     }
 
-    if (mode === 'login') {
-      login(email.trim(), password, role);
-      return;
-    }
+    try {
+      setSubmitting(true);
+      if (mode === 'login') {
+        await login(email.trim(), password, role);
+        return;
+      }
 
-    if (password.length < 6) {
-      window.alert('Password must be at least 6 characters.');
-      return;
-    }
+      if (password.length < 6) {
+        window.alert('Password must be at least 6 characters.');
+        return;
+      }
 
-    register(name.trim(), email.trim(), password, role);
+      await register(name.trim(), email.trim(), password, role);
+      window.alert('Registered. If email confirmation is enabled, verify your email first.');
+    } catch (error) {
+      window.alert(error?.message || 'Authentication error.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -66,7 +81,9 @@ function AuthScreen() {
             <RoleButton label="Admin" active={role === ROLES.ADMIN} onClick={() => setRole(ROLES.ADMIN)} />
           </div>
 
-          <button className="btn btn-primary" type="submit">{mode === 'login' ? 'Log In' : 'Register'}</button>
+          <button className="btn btn-primary" type="submit" disabled={submitting}>
+            {submitting ? 'Please wait...' : mode === 'login' ? 'Log In' : 'Register'}
+          </button>
           <button className="btn btn-link" type="button" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
             {mode === 'login' ? 'Need an account? Register' : 'Already have an account? Log In'}
           </button>
@@ -92,13 +109,41 @@ function Dashboard() {
   const [vehicleType, setVehicleType] = useState('all');
   const [radius, setRadius] = useState('2');
   const [paymentDone, setPaymentDone] = useState(false);
+  const [vehiclesData, setVehiclesData] = useState([]);
+  const [transitRoutes, setTransitRoutes] = useState([]);
+  const [parkingSpots, setParkingSpots] = useState([]);
+  const [providerRentals, setProviderRentals] = useState([]);
+  const [loadingData, setLoadingData] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadAll() {
+      setLoadingData(true);
+      const [v, t, p, r] = await Promise.all([
+        fetchVehicles(),
+        fetchTransitRoutes(),
+        fetchParkingSpots(),
+        fetchProviderRentals(),
+      ]);
+      if (!mounted) return;
+      setVehiclesData(v);
+      setTransitRoutes(t);
+      setParkingSpots(p);
+      setProviderRentals(r);
+      setLoadingData(false);
+    }
+    loadAll();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const vehicles = useMemo(() => {
-    let list = [...mockVehicles];
+    let list = [...vehiclesData];
     if (vehicleType !== 'all') list = list.filter((v) => v.type === vehicleType);
     const maxRadius = parseFloat(radius) || 2;
     return list.filter((v) => v.distance <= maxRadius);
-  }, [vehicleType, radius]);
+  }, [vehiclesData, vehicleType, radius]);
 
   const goReserve = (vehicle) => {
     setReserve(vehicle);
@@ -140,6 +185,7 @@ function Dashboard() {
       </aside>
 
       <main className="content">
+        {loadingData && <div className="panel">Loading data from Supabase...</div>}
         {isCitizen && tab === 'home' && (
           <Section title="Quick actions" subtitle="Citizen dashboard">
             <div className="grid-2">
@@ -194,7 +240,7 @@ function Dashboard() {
         {isCitizen && tab === 'transit' && (
           <Section title="Public transit" subtitle="Routes and schedules">
             <div className="grid-2">
-              {mockTransitRoutes.map((route) => (
+              {transitRoutes.map((route) => (
                 <Card
                   key={route.id}
                   title={route.line}
@@ -208,7 +254,7 @@ function Dashboard() {
         {isCitizen && tab === 'parking' && (
           <Section title="Parking" subtitle="Available spaces nearby">
             <div className="grid-2">
-              {mockParkingSpots.map((spot) => (
+              {parkingSpots.map((spot) => (
                 <Card key={spot.id} title={spot.address} text={`${spot.available}/${spot.total} spots | ${spot.distance} km`} />
               ))}
             </div>
@@ -236,8 +282,8 @@ function Dashboard() {
           </Section>
         )}
 
-        {isProvider && tab === 'vehicles' && <ProviderVehicles />}
-        {isProvider && tab === 'rentalData' && <ProviderRentalData />}
+        {isProvider && tab === 'vehicles' && <ProviderVehicles initialVehicles={vehiclesData} />}
+        {isProvider && tab === 'rentalData' && <ProviderRentalData rentals={providerRentals} />}
 
         {isAdmin && tab === 'home' && (
           <Section title="Admin dashboard" subtitle="System monitoring">
@@ -276,12 +322,19 @@ function Card({ title, text, action }) {
   );
 }
 
-function ProviderVehicles() {
+function ProviderVehicles({ initialVehicles = [] }) {
   const [vehicles, setVehicles] = useState([
-    { id: 'v1', type: 'scooter', name: 'Scooter #101', status: 'available', maintenance: 'ok' },
-    { id: 'v2', type: 'scooter', name: 'Scooter #102', status: 'available', maintenance: 'ok' },
-    { id: 'v3', type: 'bike', name: 'Bike #201', status: 'maintenance', maintenance: 'pending' },
+    ...(initialVehicles.length ? initialVehicles : [
+      { id: 'v1', type: 'scooter', name: 'Scooter #101', status: 'available', maintenance: 'ok' },
+      { id: 'v2', type: 'scooter', name: 'Scooter #102', status: 'available', maintenance: 'ok' },
+      { id: 'v3', type: 'bike', name: 'Bike #201', status: 'maintenance', maintenance: 'pending' },
+    ]),
   ]);
+  useEffect(() => {
+    if (initialVehicles.length) {
+      setVehicles(initialVehicles);
+    }
+  }, [initialVehicles]);
 
   const addVehicle = () => {
     setVehicles((prev) => [
@@ -312,11 +365,12 @@ function ProviderVehicles() {
   );
 }
 
-function ProviderRentalData() {
+function ProviderRentalData({ rentals = [] }) {
   return (
     <Section title="Rental records" subtitle="Manage and view rental data">
+      {rentals.length === 0 && <div className="panel">No rental records found.</div>}
       <div className="grid-2">
-        {mockProviderRentals.map((record) => (
+        {rentals.map((record) => (
           <Card key={record.id} title={record.vehicle} text={`${record.user} | ${record.start} -> ${record.end} | $${record.cost}`} />
         ))}
       </div>
