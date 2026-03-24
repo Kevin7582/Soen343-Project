@@ -1,16 +1,52 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AuthProvider, ROLES, useAuth } from '../context/AuthContext';
 import { RentalProvider, useRental } from '../context/RentalContext';
 import {
+  completeParkingReservation,
+  cancelParkingReservation,
   fetchParkingSpots,
   fetchProviderRentals,
   fetchTransitRoutes,
+  fetchUserParkingReservation,
+  fetchUserTransitPlans,
   fetchVehicles,
+  planTransitTrip,
+  reserveParkingSpot,
+  startParkingReservation,
+  updateParkingReservationDuration,
 } from '../../service-layer/mobilityService';
 
-const CITIZEN_TABS = ['home', 'search', 'transit', 'parking', 'activeRental', 'profile'];
-const PROVIDER_TABS = ['home', 'vehicles', 'rentalData', 'profile'];
-const ADMIN_TABS = ['home', 'rentalAnalytics', 'gatewayAnalytics', 'profile'];
+const TABS = {
+  citizen: ['home', 'search', 'transit', 'parking', 'activeRental', 'profile'],
+  provider: ['home', 'vehicles', 'rentalData', 'profile'],
+  admin: ['home', 'rentalAnalytics', 'gatewayAnalytics', 'profile'],
+};
+
+const TAB_LABELS = {
+  home: 'Home',
+  search: 'Find Vehicle',
+  transit: 'Transit',
+  parking: 'Parking',
+  activeRental: 'Active Rental',
+  vehicles: 'Vehicles',
+  rentalData: 'Rentals',
+  rentalAnalytics: 'Rental Analytics',
+  gatewayAnalytics: 'Gateway Analytics',
+  profile: 'Profile',
+};
+
+const KPIS = [
+  ['1,247', 'Rentals (30d)'],
+  ['342', 'Active users'],
+  ['Scooter', 'Top vehicle type'],
+  ['18 min', 'Avg. duration'],
+];
+
+const FALLBACK_PROVIDER_VEHICLES = [
+  { id: 'v1', type: 'scooter', name: 'Scooter #101', status: 'available', maintenance: 'ok' },
+  { id: 'v2', type: 'scooter', name: 'Scooter #102', status: 'available', maintenance: 'ok' },
+  { id: 'v3', type: 'bike', name: 'Bike #201', status: 'maintenance', maintenance: 'pending' },
+];
 
 export default function App() {
   return (
@@ -24,55 +60,86 @@ export default function App() {
 
 function Root() {
   const { isAuthenticated, authLoading } = useAuth();
-  if (authLoading) return <div className="auth-wrap"><div className="auth-card">Loading...</div></div>;
+
+  if (authLoading) {
+    return (
+      <div className="auth-wrap">
+        <div className="auth-card">Loading...</div>
+      </div>
+    );
+  }
+
   return <div className="app-shell">{isAuthenticated ? <Dashboard /> : <AuthScreen />}</div>;
 }
 
 function AuthScreen() {
   const [mode, setMode] = useState('login');
-  const { login, register } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState(ROLES.CITIZEN);
   const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState('');
+  const { login, register, resetPassword } = useAuth();
+
+  const clearFormError = () => setFormError('');
 
   const submit = async (event) => {
     event.preventDefault();
-    if (!email.trim() || !password.trim() || (mode === 'register' && !name.trim())) {
-      window.alert('Please fill all required fields.');
-      return;
-    }
+    clearFormError();
 
     try {
       setSubmitting(true);
+
       if (mode === 'login') {
         await login(email.trim(), password, role);
-        return;
+      } else {
+        const proceed = window.confirm('Create a new account with these values?');
+        if (!proceed) return;
+        await register(name.trim(), email.trim(), password, role);
+        window.alert('Registered. If email confirmation is enabled, verify your email first.');
       }
-
-      if (password.length < 6) {
-        window.alert('Password must be at least 6 characters.');
-        return;
-      }
-
-      await register(name.trim(), email.trim(), password, role);
-      window.alert('Registered. If email confirmation is enabled, verify your email first.');
     } catch (error) {
-      window.alert(error?.message || 'Authentication error.');
+      setFormError(error?.message || 'Authentication error.');
     } finally {
       setSubmitting(false);
     }
   };
 
+  const onForgotPassword = async () => {
+    clearFormError();
+
+    try {
+      setSubmitting(true);
+      await resetPassword(email.trim());
+      window.alert('Password reset email sent. Check your inbox.');
+    } catch (error) {
+      setFormError(error?.message || 'Could not send reset email.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const toggleMode = () => {
+    clearFormError();
+    setMode((prev) => (prev === 'login' ? 'register' : 'login'));
+  };
+
+  const isRegisterMode = mode === 'register';
+
   return (
     <div className="auth-wrap">
       <div className="auth-card">
         <h1>SUMMS</h1>
+        <p><strong>Mode:</strong> {isRegisterMode ? 'REGISTER' : 'LOGIN'}</p>
         <p>Smart Urban Mobility Management</p>
+
         <form onSubmit={submit} className="stack-12">
-          {mode === 'register' && <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" />}
-          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" type="email" />
+          {isRegisterMode && (
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" />
+          )}
+
+          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" type="text" />
           <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" type="password" />
 
           <div className="role-row">
@@ -81,11 +148,20 @@ function AuthScreen() {
             <RoleButton label="Admin" active={role === ROLES.ADMIN} onClick={() => setRole(ROLES.ADMIN)} />
           </div>
 
+          {!!formError && <div className="auth-error">{formError}</div>}
+
           <button className="btn btn-primary" type="submit" disabled={submitting}>
-            {submitting ? 'Please wait...' : mode === 'login' ? 'Log In' : 'Register'}
+            {submitting ? 'Please wait...' : isRegisterMode ? 'Register' : 'Log In'}
           </button>
-          <button className="btn btn-link" type="button" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
-            {mode === 'login' ? 'Need an account? Register' : 'Already have an account? Log In'}
+
+          {!isRegisterMode && (
+            <button className="btn btn-link" type="button" onClick={onForgotPassword} disabled={submitting}>
+              Forgot password?
+            </button>
+          )}
+
+          <button className="btn btn-link" type="button" onClick={toggleMode}>
+            {isRegisterMode ? 'Already have an account? Log In' : 'Need an account? Register'}
           </button>
         </form>
       </div>
@@ -103,200 +179,524 @@ function RoleButton({ label, active, onClick }) {
 
 function Dashboard() {
   const { user, isCitizen, isProvider, isAdmin, logout } = useAuth();
-  const { reservation, activeRental, setReserve, clearReservation, startRental, endRental } = useRental();
-  const tabs = isCitizen ? CITIZEN_TABS : isProvider ? PROVIDER_TABS : ADMIN_TABS;
+  const {
+    reservation,
+    activeRental,
+    reserveVehicle,
+    clearReservation,
+    startRental,
+    endRental,
+    rentalLoading,
+    rentalError,
+    clearError,
+  } = useRental();
   const [tab, setTab] = useState('home');
   const [vehicleType, setVehicleType] = useState('all');
   const [radius, setRadius] = useState('2');
   const [paymentDone, setPaymentDone] = useState(false);
-  const [vehiclesData, setVehiclesData] = useState([]);
-  const [transitRoutes, setTransitRoutes] = useState([]);
-  const [parkingSpots, setParkingSpots] = useState([]);
-  const [providerRentals, setProviderRentals] = useState([]);
-  const [loadingData, setLoadingData] = useState(true);
+  const [parkingReservation, setParkingReservation] = useState(null);
+  const [parkingDuration, setParkingDuration] = useState('1');
+  const [transitPlans, setTransitPlans] = useState([]);
+  const [transitFrom, setTransitFrom] = useState('Downtown');
+  const [transitTo, setTransitTo] = useState('Campus');
+  const [mobilityError, setMobilityError] = useState('');
+
+  const { loadingData, vehiclesData, transitRoutes, parkingSpots, providerRentals, refreshDashboardData } = useDashboardData();
+
+  const tabs = getTabsForUser({ isCitizen, isProvider, isAdmin });
+
+  useEffect(() => {
+    if (!tabs.includes(tab)) {
+      setTab('home');
+    }
+  }, [tab, tabs]);
 
   useEffect(() => {
     let mounted = true;
-    async function loadAll() {
-      setLoadingData(true);
-      const [v, t, p, r] = await Promise.all([
-        fetchVehicles(),
-        fetchTransitRoutes(),
-        fetchParkingSpots(),
-        fetchProviderRentals(),
-      ]);
-      if (!mounted) return;
-      setVehiclesData(v);
-      setTransitRoutes(t);
-      setParkingSpots(p);
-      setProviderRentals(r);
-      setLoadingData(false);
+    async function loadUserMobilityData() {
+      if (!user?.id) {
+        setParkingReservation(null);
+        setTransitPlans([]);
+        return;
+      }
+      try {
+        const [reservationData, plans] = await Promise.all([
+          fetchUserParkingReservation(user.id),
+          fetchUserTransitPlans(user.id),
+        ]);
+        if (!mounted) return;
+        setParkingReservation(reservationData);
+        if (reservationData?.durationHours) {
+          setParkingDuration(String(reservationData.durationHours));
+        }
+        setTransitPlans(plans);
+      } catch (error) {
+        if (!mounted) return;
+        setMobilityError(error?.message || 'Unable to load parking/transit state.');
+      }
     }
-    loadAll();
+    loadUserMobilityData();
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [user?.id]);
 
-  const vehicles = useMemo(() => {
+  const filteredVehicles = useMemo(() => {
     let list = [...vehiclesData];
-    if (vehicleType !== 'all') list = list.filter((v) => v.type === vehicleType);
+    if (vehicleType !== 'all') {
+      list = list.filter((vehicle) => vehicle.type === vehicleType);
+    }
+
     const maxRadius = parseFloat(radius) || 2;
-    return list.filter((v) => v.distance <= maxRadius);
+    return list.filter((vehicle) => vehicle.distance <= maxRadius);
   }, [vehiclesData, vehicleType, radius]);
 
-  const goReserve = (vehicle) => {
-    setReserve(vehicle);
-    setTab('search');
+  const handleReserveVehicle = async (vehicle) => {
+    if (reservation || activeRental) {
+      setMobilityError('You can only have one vehicle reservation/rental at a time.');
+      return;
+    }
+    clearError();
+    setMobilityError('');
+    try {
+      await reserveVehicle(vehicle);
+      await refreshDashboardData();
+      setTab('search');
+    } catch {
+      // Error is shown from context state.
+    }
   };
 
-  const goPayment = () => {
+  const beginPayment = async () => {
     if (!reservation) return;
-    const txId = `tx_${Date.now()}`;
-    startRental(reservation, txId);
-    setPaymentDone(false);
-    setTab('activeRental');
+
+    const transactionId = `tx_${Date.now()}`;
+    clearError();
+    setMobilityError('');
+    try {
+      await startRental(transactionId);
+      await refreshDashboardData();
+      setPaymentDone(false);
+      setTab('activeRental');
+    } catch {
+      // Error is shown from context state.
+    }
   };
 
-  const completeReturn = () => {
+  const returnVehicle = async () => {
     if (!activeRental) return;
+
     const start = new Date(activeRental.startTime);
     const elapsedMin = Math.max(1, Math.floor((Date.now() - start.getTime()) / 60000));
     const totalCost = elapsedMin * (activeRental.vehicle?.ratePerMin || 0.25);
-    endRental(totalCost, { transactionId: activeRental.paymentTxId });
-    setPaymentDone(true);
+
+    clearError();
+    setMobilityError('');
+    try {
+      await endRental(totalCost, { transactionId: activeRental.paymentTxId });
+      await refreshDashboardData();
+      setPaymentDone(true);
+    } catch {
+      // Error is shown from context state.
+    }
+  };
+
+  const handleReserveParking = async (spot) => {
+    if (!user?.id) return;
+    if (parkingReservation) {
+      setMobilityError('You can only manage one parking reservation at a time.');
+      return;
+    }
+    setMobilityError('');
+    const duration = Math.max(1, Number(parkingDuration) || 1);
+    try {
+      const reservationData = await reserveParkingSpot(user.id, spot, duration);
+      setParkingReservation(reservationData);
+      setParkingDuration(String(reservationData.durationHours ?? duration));
+      await refreshDashboardData();
+    } catch (error) {
+      setMobilityError(error?.message || 'Unable to reserve parking.');
+    }
+  };
+
+  const handleCancelParking = async () => {
+    if (!parkingReservation) return;
+    setMobilityError('');
+    try {
+      await cancelParkingReservation(parkingReservation);
+      setParkingReservation(null);
+      await refreshDashboardData();
+    } catch (error) {
+      setMobilityError(error?.message || 'Unable to cancel parking reservation.');
+    }
+  };
+
+  const handleStartParking = async () => {
+    if (!parkingReservation) return;
+    setMobilityError('');
+    try {
+      const active = await startParkingReservation(parkingReservation);
+      setParkingReservation(active);
+      setParkingDuration(String(active.durationHours ?? parkingDuration));
+      await refreshDashboardData();
+    } catch (error) {
+      setMobilityError(error?.message || 'Unable to start parking session.');
+    }
+  };
+
+  const handleCompleteParking = async () => {
+    if (!parkingReservation) return;
+    setMobilityError('');
+    try {
+      await completeParkingReservation(parkingReservation);
+      setParkingReservation(null);
+      await refreshDashboardData();
+    } catch (error) {
+      setMobilityError(error?.message || 'Unable to complete parking reservation.');
+    }
+  };
+
+  const handleUpdateParkingDuration = async () => {
+    if (!parkingReservation) return;
+    setMobilityError('');
+    const duration = Math.max(1, Number(parkingDuration) || 1);
+    try {
+      const updated = await updateParkingReservationDuration(parkingReservation, duration);
+      setParkingReservation(updated);
+      setParkingDuration(String(updated.durationHours ?? duration));
+      await refreshDashboardData();
+    } catch (error) {
+      setMobilityError(error?.message || 'Unable to update parking duration.');
+    }
+  };
+
+  const handlePlanTransit = async (route) => {
+    if (!user?.id) return;
+    if (!transitFrom.trim() || !transitTo.trim()) {
+      setMobilityError('Enter both origin and destination to plan a transit trip.');
+      return;
+    }
+    setMobilityError('');
+    try {
+      const plan = await planTransitTrip(user.id, route, transitFrom.trim(), transitTo.trim());
+      setTransitPlans((prev) => [plan, ...prev].slice(0, 10));
+    } catch (error) {
+      setMobilityError(error?.message || 'Unable to plan transit trip.');
+    }
   };
 
   return (
     <div className="dashboard">
-      <aside className="sidebar">
-        <div>
-          <h2>SUMMS</h2>
-          <p>{user?.name}</p>
-        </div>
-        <div className="stack-8">
-          {tabs.map((name) => (
-            <button key={name} className={`btn nav-btn ${tab === name ? 'nav-btn-active' : ''}`} onClick={() => setTab(name)}>
-              {labelForTab(name)}
-            </button>
-          ))}
-        </div>
-        <button className="btn btn-danger" onClick={logout}>Log Out</button>
-      </aside>
+      <Sidebar user={user} tabs={tabs} activeTab={tab} onSelectTab={setTab} onLogout={logout} />
 
       <main className="content">
         {loadingData && <div className="panel">Loading data from Supabase...</div>}
-        {isCitizen && tab === 'home' && (
-          <Section title="Quick actions" subtitle="Citizen dashboard">
-            <div className="grid-2">
-              <Card title="Find a vehicle" text="Scooters, bikes, and more in Montreal" action={<button className="btn btn-primary" onClick={() => setTab('search')}>Open</button>} />
-              <Card title="Public transit" text="Routes, schedules, delays" action={<button className="btn btn-primary" onClick={() => setTab('transit')}>Open</button>} />
-              <Card title="Parking" text="Available spaces nearby" action={<button className="btn btn-primary" onClick={() => setTab('parking')}>Open</button>} />
-              <Card title="Active rental" text="View or return your vehicle" action={<button className="btn btn-primary" onClick={() => setTab('activeRental')}>Open</button>} />
-            </div>
-          </Section>
+        {rentalLoading && <div className="panel">Syncing rental state...</div>}
+        {!!rentalError && <div className="panel auth-error">{rentalError}</div>}
+        {!!mobilityError && <div className="panel auth-error">{mobilityError}</div>}
+
+        {isCitizen && (
+          <CitizenViews
+            tab={tab}
+            onSelectTab={setTab}
+            vehicleType={vehicleType}
+            setVehicleType={setVehicleType}
+            radius={radius}
+            setRadius={setRadius}
+            vehicles={filteredVehicles}
+            reservation={reservation}
+            activeRental={activeRental}
+            hasOpenVehicleFlow={Boolean(reservation || activeRental)}
+            paymentDone={paymentDone}
+            onReserveVehicle={handleReserveVehicle}
+            onCancelReservation={clearReservation}
+            onProceedPayment={beginPayment}
+            onReturnVehicle={returnVehicle}
+            transitRoutes={transitRoutes}
+            parkingSpots={parkingSpots}
+            transitPlans={transitPlans}
+            transitFrom={transitFrom}
+            transitTo={transitTo}
+            setTransitFrom={setTransitFrom}
+            setTransitTo={setTransitTo}
+            onPlanTransit={handlePlanTransit}
+            parkingReservation={parkingReservation}
+            parkingDuration={parkingDuration}
+            setParkingDuration={setParkingDuration}
+            onReserveParking={handleReserveParking}
+            onCancelParking={handleCancelParking}
+            onStartParking={handleStartParking}
+            onCompleteParking={handleCompleteParking}
+            onUpdateParkingDuration={handleUpdateParkingDuration}
+          />
         )}
 
-        {isCitizen && tab === 'search' && (
-          <Section title="Find vehicle" subtitle="Search and reserve">
-            <div className="panel stack-12">
-              <div className="row wrap gap-8">
-                {['all', 'scooter', 'bike'].map((type) => (
-                  <button key={type} className={`btn ${vehicleType === type ? 'btn-primary-soft' : 'btn-soft'}`} onClick={() => setVehicleType(type)}>
-                    {type}
-                  </button>
-                ))}
-              </div>
-              <label>
-                Radius (km)
-                <input value={radius} onChange={(e) => setRadius(e.target.value)} />
-              </label>
-            </div>
-
-            <div className="grid-2">
-              {vehicles.map((vehicle) => (
-                <Card
-                  key={vehicle.id}
-                  title={vehicle.name}
-                  text={`${vehicle.type} | ${vehicle.distance} km away | $${vehicle.ratePerMin}/min`}
-                  action={<button className="btn btn-primary" onClick={() => goReserve(vehicle)}>Reserve</button>}
-                />
-              ))}
-            </div>
-
-            {reservation && (
-              <div className="panel stack-12">
-                <h3>Reservation</h3>
-                <p>{reservation.name} | ${reservation.ratePerMin}/min</p>
-                <div className="row gap-8">
-                  <button className="btn btn-primary" onClick={goPayment}>Proceed to payment</button>
-                  <button className="btn btn-soft" onClick={clearReservation}>Cancel</button>
-                </div>
-              </div>
-            )}
-          </Section>
+        {isProvider && (
+          <ProviderViews
+            tab={tab}
+            vehiclesData={vehiclesData}
+            providerRentals={providerRentals}
+          />
         )}
 
-        {isCitizen && tab === 'transit' && (
-          <Section title="Public transit" subtitle="Routes and schedules">
-            <div className="grid-2">
-              {transitRoutes.map((route) => (
-                <Card
-                  key={route.id}
-                  title={route.line}
-                  text={`${route.from} -> ${route.to} | Next: ${route.nextDeparture}${route.delay ? ` | Delay: ${route.delay} min` : ''}`}
-                />
-              ))}
-            </div>
-          </Section>
-        )}
-
-        {isCitizen && tab === 'parking' && (
-          <Section title="Parking" subtitle="Available spaces nearby">
-            <div className="grid-2">
-              {parkingSpots.map((spot) => (
-                <Card key={spot.id} title={spot.address} text={`${spot.available}/${spot.total} spots | ${spot.distance} km`} />
-              ))}
-            </div>
-          </Section>
-        )}
-
-        {isCitizen && tab === 'activeRental' && (
-          <Section title="Active rental" subtitle="Track or return your vehicle">
-            {!activeRental && !paymentDone && <div className="panel">No active rental.</div>}
-            {activeRental && (
-              <div className="panel stack-12">
-                <h3>{activeRental.vehicle?.name}</h3>
-                <p>{activeRental.vehicle?.type}</p>
-                <p>Started: {new Date(activeRental.startTime).toLocaleTimeString()}</p>
-                <button className="btn btn-primary" onClick={completeReturn}>Return vehicle</button>
-              </div>
-            )}
-            {paymentDone && <div className="panel success">Rental complete. Receipt recorded.</div>}
-          </Section>
-        )}
-
-        {isProvider && tab === 'home' && (
-          <Section title="Provider dashboard" subtitle="Manage vehicles and rentals">
-            <Card title="SUMMS Management" text="Manage your fleet and review rental data." />
-          </Section>
-        )}
-
-        {isProvider && tab === 'vehicles' && <ProviderVehicles initialVehicles={vehiclesData} />}
-        {isProvider && tab === 'rentalData' && <ProviderRentalData rentals={providerRentals} />}
-
-        {isAdmin && tab === 'home' && (
-          <Section title="Admin dashboard" subtitle="System monitoring">
-            <Card title="SUMMS Management" text="View rental and gateway analytics." />
-          </Section>
-        )}
-
-        {isAdmin && tab === 'rentalAnalytics' && <RentalAnalytics />}
-        {isAdmin && tab === 'gatewayAnalytics' && <GatewayAnalytics />}
+        {isAdmin && <AdminViews tab={tab} />}
 
         {tab === 'profile' && <Profile user={user} role={user?.role} />}
       </main>
     </div>
+  );
+}
+
+function Sidebar({ user, tabs, activeTab, onSelectTab, onLogout }) {
+  return (
+    <aside className="sidebar">
+      <div>
+        <h2>SUMMS</h2>
+        <p>{user?.name}</p>
+      </div>
+
+      <div className="stack-8">
+        {tabs.map((tabName) => (
+          <button
+            key={tabName}
+            className={`btn nav-btn ${activeTab === tabName ? 'nav-btn-active' : ''}`}
+            onClick={() => onSelectTab(tabName)}
+          >
+            {TAB_LABELS[tabName] || tabName}
+          </button>
+        ))}
+      </div>
+
+      <button className="btn btn-danger" onClick={onLogout}>Log Out</button>
+    </aside>
+  );
+}
+
+function CitizenViews({
+  tab,
+  onSelectTab,
+  vehicleType,
+  setVehicleType,
+  radius,
+  setRadius,
+  vehicles,
+  reservation,
+  activeRental,
+  hasOpenVehicleFlow,
+  paymentDone,
+  onReserveVehicle,
+  onCancelReservation,
+  onProceedPayment,
+  onReturnVehicle,
+  transitRoutes,
+  parkingSpots,
+  transitPlans,
+  transitFrom,
+  transitTo,
+  setTransitFrom,
+  setTransitTo,
+  onPlanTransit,
+  parkingReservation,
+  parkingDuration,
+  setParkingDuration,
+  onReserveParking,
+  onCancelParking,
+  onStartParking,
+  onCompleteParking,
+  onUpdateParkingDuration,
+}) {
+  return (
+    <>
+      {tab === 'home' && (
+        <Section title="Quick actions" subtitle="Citizen dashboard">
+          <div className="grid-2">
+            <Card title="Find a vehicle" text="Scooters, bikes, and more in Montreal" action={<button className="btn btn-primary" onClick={() => onSelectTab('search')}>Open</button>} />
+            <Card title="Public transit" text="Routes, schedules, delays" action={<button className="btn btn-primary" onClick={() => onSelectTab('transit')}>Open</button>} />
+            <Card title="Parking" text="Available spaces nearby" action={<button className="btn btn-primary" onClick={() => onSelectTab('parking')}>Open</button>} />
+            <Card title="Active rental" text="View or return your vehicle" action={<button className="btn btn-primary" onClick={() => onSelectTab('activeRental')}>Open</button>} />
+          </div>
+        </Section>
+      )}
+
+      {tab === 'search' && (
+        <Section title="Find vehicle" subtitle="Search and reserve">
+          <div className="panel stack-12">
+            <div className="row wrap gap-8">
+              {['all', 'scooter', 'bike'].map((type) => (
+                <button key={type} className={`btn ${vehicleType === type ? 'btn-primary-soft' : 'btn-soft'}`} onClick={() => setVehicleType(type)}>
+                  {type}
+                </button>
+              ))}
+            </div>
+
+            <label>
+              Radius (km)
+              <input value={radius} onChange={(e) => setRadius(e.target.value)} />
+            </label>
+          </div>
+
+          <div className="grid-2">
+            {vehicles.map((vehicle) => (
+              <Card
+                key={vehicle.id}
+                title={vehicle.name}
+                text={`${vehicle.type} | ${vehicle.distance} km away | $${vehicle.ratePerMin}/min`}
+                action={<button className="btn btn-primary" disabled={hasOpenVehicleFlow || vehicle.status !== 'available'} onClick={() => onReserveVehicle(vehicle)}>Reserve</button>}
+              />
+            ))}
+          </div>
+
+          {reservation && (
+            <div className="panel stack-12">
+              <h3>Reservation</h3>
+              <p>{reservation.vehicle?.name || `Vehicle #${reservation.vehicleId}`} | ${reservation.vehicle?.ratePerMin ?? 0.25}/min</p>
+              <div className="row gap-8">
+                <button className="btn btn-primary" onClick={onProceedPayment}>Proceed to payment</button>
+                <button className="btn btn-soft" onClick={onCancelReservation}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </Section>
+      )}
+
+      {tab === 'transit' && (
+        <Section title="Public transit" subtitle="Routes and schedules">
+          <div className="panel stack-12">
+            <h3>Plan a trip</h3>
+            <div className="row gap-8 wrap">
+              <label>
+                From
+                <input value={transitFrom} onChange={(e) => setTransitFrom(e.target.value)} />
+              </label>
+              <label>
+                To
+                <input value={transitTo} onChange={(e) => setTransitTo(e.target.value)} />
+              </label>
+            </div>
+          </div>
+
+          <div className="grid-2">
+            {transitRoutes.map((route) => (
+              <Card
+                key={route.id}
+                title={route.line}
+                text={`${route.from} -> ${route.to} | Next: ${route.nextDeparture}${route.delay ? ` | Delay: ${route.delay} min` : ''}`}
+                action={<button className="btn btn-primary" onClick={() => onPlanTransit(route)}>Plan this route</button>}
+              />
+            ))}
+          </div>
+
+          <div className="panel stack-8">
+            <h3>Recent transit plans</h3>
+            {transitPlans.length === 0 && <p>No planned trips yet.</p>}
+            {transitPlans.map((plan) => (
+              <p key={plan.id}>
+                {plan.from} {'->'} {plan.to} ({new Date(plan.plannedAt).toLocaleString()})
+              </p>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {tab === 'parking' && (
+        <Section title="Parking" subtitle="Available spaces nearby">
+          <div className="panel stack-12">
+            <h3>Parking reservation</h3>
+            {(!parkingReservation || parkingReservation.status === 'reserved') && (
+              <label>
+                Duration (hours)
+                <input value={parkingDuration} onChange={(e) => setParkingDuration(e.target.value)} />
+              </label>
+            )}
+            {parkingReservation && (
+              <div className="stack-8">
+                <p>Reserved spot: {parkingReservation.spot?.address || parkingReservation.spotId}</p>
+                <p>Status: {parkingReservation.status}</p>
+                <p>Duration: {parkingReservation.durationHours}h</p>
+                <p>Estimated cost: ${parkingReservation.estimatedCost}</p>
+                {parkingReservation.status === 'reserved' && (
+                  <button className="btn btn-soft" onClick={onUpdateParkingDuration}>Update duration</button>
+                )}
+                {parkingReservation.status === 'reserved' && (
+                  <button className="btn btn-primary" onClick={onStartParking}>Start parking session</button>
+                )}
+                {parkingReservation.status === 'active' && (
+                  <button className="btn btn-primary" onClick={onCompleteParking}>Complete parking</button>
+                )}
+                <button className="btn btn-soft" onClick={onCancelParking}>Cancel reservation</button>
+              </div>
+            )}
+          </div>
+
+          <div className="grid-2">
+            {parkingSpots.map((spot) => (
+              <Card
+                key={spot.id}
+                title={spot.address}
+                text={`${spot.available}/${spot.total} spots | ${spot.distance} km | $${(spot.pricePerHour ?? 2.5)}/h`}
+                action={<button className="btn btn-primary" disabled={spot.available <= 0 || Boolean(parkingReservation)} onClick={() => onReserveParking(spot)}>Reserve spot</button>}
+              />
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {tab === 'activeRental' && (
+        <Section title="Active rental" subtitle="Track or return your vehicle">
+          {!activeRental && reservation && (
+            <div className="panel stack-12">
+              <h3>Reservation ready</h3>
+              <p>{reservation.vehicle?.name || `Vehicle #${reservation.vehicleId}`}</p>
+              <p>{reservation.vehicle?.type || 'vehicle'}</p>
+              <button className="btn btn-primary" onClick={onProceedPayment}>Start rental now</button>
+            </div>
+          )}
+
+          {!activeRental && !reservation && !paymentDone && <div className="panel">No active rental.</div>}
+
+          {activeRental && (
+            <div className="panel stack-12">
+              <h3>{activeRental.vehicle?.name}</h3>
+              <p>{activeRental.vehicle?.type}</p>
+              <p>Started: {new Date(activeRental.startTime).toLocaleTimeString()}</p>
+              <button className="btn btn-primary" onClick={onReturnVehicle}>Return vehicle</button>
+            </div>
+          )}
+
+          {paymentDone && <div className="panel success">Rental complete. Receipt recorded.</div>}
+        </Section>
+      )}
+    </>
+  );
+}
+
+function ProviderViews({ tab, vehiclesData, providerRentals }) {
+  return (
+    <>
+      {tab === 'home' && (
+        <Section title="Provider dashboard" subtitle="Manage vehicles and rentals">
+          <Card title="SUMMS Management" text="Manage your fleet and review rental data." />
+        </Section>
+      )}
+
+      {tab === 'vehicles' && <ProviderVehicles initialVehicles={vehiclesData} />}
+      {tab === 'rentalData' && <ProviderRentalData rentals={providerRentals} />}
+    </>
+  );
+}
+
+function AdminViews({ tab }) {
+  return (
+    <>
+      {tab === 'home' && (
+        <Section title="Admin dashboard" subtitle="System monitoring">
+          <Card title="SUMMS Management" text="View rental and gateway analytics." />
+        </Section>
+      )}
+
+      {tab === 'rentalAnalytics' && <RentalAnalytics />}
+      {tab === 'gatewayAnalytics' && <GatewayAnalytics />}
+    </>
   );
 }
 
@@ -323,13 +723,8 @@ function Card({ title, text, action }) {
 }
 
 function ProviderVehicles({ initialVehicles = [] }) {
-  const [vehicles, setVehicles] = useState([
-    ...(initialVehicles.length ? initialVehicles : [
-      { id: 'v1', type: 'scooter', name: 'Scooter #101', status: 'available', maintenance: 'ok' },
-      { id: 'v2', type: 'scooter', name: 'Scooter #102', status: 'available', maintenance: 'ok' },
-      { id: 'v3', type: 'bike', name: 'Bike #201', status: 'maintenance', maintenance: 'pending' },
-    ]),
-  ]);
+  const [vehicles, setVehicles] = useState(initialVehicles.length ? initialVehicles : FALLBACK_PROVIDER_VEHICLES);
+
   useEffect(() => {
     if (initialVehicles.length) {
       setVehicles(initialVehicles);
@@ -337,25 +732,38 @@ function ProviderVehicles({ initialVehicles = [] }) {
   }, [initialVehicles]);
 
   const addVehicle = () => {
-    setVehicles((prev) => [
-      ...prev,
-      { id: `v${Date.now()}`, type: 'scooter', name: `Vehicle #${prev.length + 1}`, status: 'available', maintenance: 'ok' },
+    setVehicles((previousVehicles) => [
+      ...previousVehicles,
+      {
+        id: `v${Date.now()}`,
+        type: 'scooter',
+        name: `Vehicle #${previousVehicles.length + 1}`,
+        status: 'available',
+        maintenance: 'ok',
+      },
     ]);
+  };
+
+  const toggleVehicleStatus = (vehicleId) => {
+    setVehicles((previousVehicles) => previousVehicles.map((vehicle) => {
+      if (vehicle.id !== vehicleId) return vehicle;
+
+      const nextStatus = vehicle.status === 'available' ? 'unavailable' : 'available';
+      return { ...vehicle, status: nextStatus };
+    }));
   };
 
   return (
     <Section title="Vehicles" subtitle="Fleet management">
       <button className="btn btn-primary" onClick={addVehicle}>Add vehicle</button>
+
       <div className="grid-2">
-        {vehicles.map((v) => (
-          <div className="card" key={v.id}>
-            <h3>{v.name}</h3>
-            <p>{v.type}</p>
-            <p>Status: {v.status}</p>
-            <button
-              className="btn btn-soft"
-              onClick={() => setVehicles((prev) => prev.map((item) => item.id === v.id ? { ...item, status: item.status === 'available' ? 'unavailable' : 'available' } : item))}
-            >
+        {vehicles.map((vehicle) => (
+          <div className="card" key={vehicle.id}>
+            <h3>{vehicle.name}</h3>
+            <p>{vehicle.type}</p>
+            <p>Status: {vehicle.status}</p>
+            <button className="btn btn-soft" onClick={() => toggleVehicleStatus(vehicle.id)}>
               Toggle status
             </button>
           </div>
@@ -369,6 +777,7 @@ function ProviderRentalData({ rentals = [] }) {
   return (
     <Section title="Rental records" subtitle="Manage and view rental data">
       {rentals.length === 0 && <div className="panel">No rental records found.</div>}
+
       <div className="grid-2">
         {rentals.map((record) => (
           <Card key={record.id} title={record.vehicle} text={`${record.user} | ${record.start} -> ${record.end} | $${record.cost}`} />
@@ -379,17 +788,10 @@ function ProviderRentalData({ rentals = [] }) {
 }
 
 function RentalAnalytics() {
-  const kpis = [
-    ['1,247', 'Rentals (30d)'],
-    ['342', 'Active users'],
-    ['Scooter', 'Top vehicle type'],
-    ['18 min', 'Avg. duration'],
-  ];
-
   return (
     <Section title="Rental analytics" subtitle="Usage trends and KPIs">
       <div className="grid-2">
-        {kpis.map(([value, label]) => (
+        {KPIS.map(([value, label]) => (
           <div className="card" key={label}>
             <h2>{value}</h2>
             <p>{label}</p>
@@ -430,19 +832,48 @@ function Profile({ user, role }) {
   );
 }
 
-function labelForTab(name) {
-  const labels = {
-    home: 'Home',
-    search: 'Find Vehicle',
-    transit: 'Transit',
-    parking: 'Parking',
-    activeRental: 'Active Rental',
-    vehicles: 'Vehicles',
-    rentalData: 'Rentals',
-    rentalAnalytics: 'Rental Analytics',
-    gatewayAnalytics: 'Gateway Analytics',
-    profile: 'Profile',
-  };
+function useDashboardData() {
+  const [vehiclesData, setVehiclesData] = useState([]);
+  const [transitRoutes, setTransitRoutes] = useState([]);
+  const [parkingSpots, setParkingSpots] = useState([]);
+  const [providerRentals, setProviderRentals] = useState([]);
+  const [loadingData, setLoadingData] = useState(true);
 
-  return labels[name] || name;
+  const refreshDashboardData = useCallback(async () => {
+    try {
+      setLoadingData(true);
+      const [vehicles, routes, spots, rentals] = await Promise.all([
+        fetchVehicles(),
+        fetchTransitRoutes(),
+        fetchParkingSpots(),
+        fetchProviderRentals(),
+      ]);
+      setVehiclesData(vehicles);
+      setTransitRoutes(routes);
+      setParkingSpots(spots);
+      setProviderRentals(rentals);
+    } finally {
+      setLoadingData(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshDashboardData();
+  }, [refreshDashboardData]);
+
+  return {
+    loadingData,
+    vehiclesData,
+    transitRoutes,
+    parkingSpots,
+    providerRentals,
+    refreshDashboardData,
+  };
+}
+
+function getTabsForUser({ isCitizen, isProvider, isAdmin }) {
+  if (isAdmin) return TABS.admin;
+  if (isProvider) return TABS.provider;
+  if (isCitizen) return TABS.citizen;
+  return TABS.citizen;
 }
