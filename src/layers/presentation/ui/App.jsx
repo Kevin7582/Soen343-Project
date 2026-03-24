@@ -8,9 +8,37 @@ import {
   fetchVehicles,
 } from '../../service-layer/mobilityService';
 
-const CITIZEN_TABS = ['home', 'search', 'transit', 'parking', 'activeRental', 'profile'];
-const PROVIDER_TABS = ['home', 'vehicles', 'rentalData', 'profile'];
-const ADMIN_TABS = ['home', 'rentalAnalytics', 'gatewayAnalytics', 'profile'];
+const TABS = {
+  citizen: ['home', 'search', 'transit', 'parking', 'activeRental', 'profile'],
+  provider: ['home', 'vehicles', 'rentalData', 'profile'],
+  admin: ['home', 'rentalAnalytics', 'gatewayAnalytics', 'profile'],
+};
+
+const TAB_LABELS = {
+  home: 'Home',
+  search: 'Find Vehicle',
+  transit: 'Transit',
+  parking: 'Parking',
+  activeRental: 'Active Rental',
+  vehicles: 'Vehicles',
+  rentalData: 'Rentals',
+  rentalAnalytics: 'Rental Analytics',
+  gatewayAnalytics: 'Gateway Analytics',
+  profile: 'Profile',
+};
+
+const KPIS = [
+  ['1,247', 'Rentals (30d)'],
+  ['342', 'Active users'],
+  ['Scooter', 'Top vehicle type'],
+  ['18 min', 'Avg. duration'],
+];
+
+const FALLBACK_PROVIDER_VEHICLES = [
+  { id: 'v1', type: 'scooter', name: 'Scooter #101', status: 'available', maintenance: 'ok' },
+  { id: 'v2', type: 'scooter', name: 'Scooter #102', status: 'available', maintenance: 'ok' },
+  { id: 'v3', type: 'bike', name: 'Bike #201', status: 'maintenance', maintenance: 'pending' },
+];
 
 export default function App() {
   return (
@@ -24,13 +52,20 @@ export default function App() {
 
 function Root() {
   const { isAuthenticated, authLoading } = useAuth();
-  if (authLoading) return <div className="auth-wrap"><div className="auth-card">Loading...</div></div>;
+
+  if (authLoading) {
+    return (
+      <div className="auth-wrap">
+        <div className="auth-card">Loading...</div>
+      </div>
+    );
+  }
+
   return <div className="app-shell">{isAuthenticated ? <Dashboard /> : <AuthScreen />}</div>;
 }
 
 function AuthScreen() {
   const [mode, setMode] = useState('login');
-  const { login, register, resetPassword } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -38,35 +73,42 @@ function AuthScreen() {
   const [role, setRole] = useState(ROLES.CITIZEN);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
+  const { login, register, resetPassword } = useAuth();
+
+  const clearFormError = () => setFormError('');
+
+  const validateAuthForm = () => {
+    if (!email.trim() || !password.trim() || (mode === 'register' && !name.trim())) {
+      return 'Please fill all required fields.';
+    }
+    if (mode === 'register' && password.length < 6) {
+      return 'Password must be at least 6 characters.';
+    }
+    if (mode === 'register' && password !== confirmPassword) {
+      return 'Passwords do not match.';
+    }
+    return '';
+  };
 
   const submit = async (event) => {
     event.preventDefault();
-    setFormError('');
+    clearFormError();
 
-    if (!email.trim() || !password.trim() || (mode === 'register' && !name.trim())) {
-      setFormError('Please fill all required fields.');
+    const validationMessage = validateAuthForm();
+    if (validationMessage) {
+      setFormError(validationMessage);
       return;
     }
 
     try {
       setSubmitting(true);
+
       if (mode === 'login') {
         await login(email.trim(), password, role);
-        return;
+      } else {
+        await register(name.trim(), email.trim(), password, role);
+        window.alert('Registered. If email confirmation is enabled, verify your email first.');
       }
-
-      if (password.length < 6) {
-        setFormError('Password must be at least 6 characters.');
-        return;
-      }
-
-      if (password !== confirmPassword) {
-        setFormError('Passwords do not match.');
-        return;
-      }
-
-      await register(name.trim(), email.trim(), password, role);
-      window.alert('Registered. If email confirmation is enabled, verify your email first.');
     } catch (error) {
       setFormError(error?.message || 'Authentication error.');
     } finally {
@@ -75,7 +117,8 @@ function AuthScreen() {
   };
 
   const onForgotPassword = async () => {
-    setFormError('');
+    clearFormError();
+
     if (!email.trim()) {
       setFormError('Enter your email first, then click Reset password.');
       return;
@@ -92,16 +135,28 @@ function AuthScreen() {
     }
   };
 
+  const toggleMode = () => {
+    clearFormError();
+    setMode((prev) => (prev === 'login' ? 'register' : 'login'));
+  };
+
+  const isRegisterMode = mode === 'register';
+
   return (
     <div className="auth-wrap">
       <div className="auth-card">
         <h1>SUMMS</h1>
         <p>Smart Urban Mobility Management</p>
+
         <form onSubmit={submit} className="stack-12">
-          {mode === 'register' && <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" />}
+          {isRegisterMode && (
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" />
+          )}
+
           <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" type="email" />
           <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" type="password" />
-          {mode === 'register' && (
+
+          {isRegisterMode && (
             <input
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
@@ -119,15 +174,17 @@ function AuthScreen() {
           {!!formError && <div className="auth-error">{formError}</div>}
 
           <button className="btn btn-primary" type="submit" disabled={submitting}>
-            {submitting ? 'Please wait...' : mode === 'login' ? 'Log In' : 'Register'}
+            {submitting ? 'Please wait...' : isRegisterMode ? 'Register' : 'Log In'}
           </button>
-          {mode === 'login' && (
+
+          {!isRegisterMode && (
             <button className="btn btn-link" type="button" onClick={onForgotPassword} disabled={submitting}>
               Forgot password?
             </button>
           )}
-          <button className="btn btn-link" type="button" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
-            {mode === 'login' ? 'Need an account? Register' : 'Already have an account? Log In'}
+
+          <button className="btn btn-link" type="button" onClick={toggleMode}>
+            {isRegisterMode ? 'Already have an account? Log In' : 'Need an account? Register'}
           </button>
         </form>
       </div>
@@ -146,199 +203,268 @@ function RoleButton({ label, active, onClick }) {
 function Dashboard() {
   const { user, isCitizen, isProvider, isAdmin, logout } = useAuth();
   const { reservation, activeRental, setReserve, clearReservation, startRental, endRental } = useRental();
-  const tabs = isCitizen ? CITIZEN_TABS : isProvider ? PROVIDER_TABS : ADMIN_TABS;
   const [tab, setTab] = useState('home');
   const [vehicleType, setVehicleType] = useState('all');
   const [radius, setRadius] = useState('2');
   const [paymentDone, setPaymentDone] = useState(false);
-  const [vehiclesData, setVehiclesData] = useState([]);
-  const [transitRoutes, setTransitRoutes] = useState([]);
-  const [parkingSpots, setParkingSpots] = useState([]);
-  const [providerRentals, setProviderRentals] = useState([]);
-  const [loadingData, setLoadingData] = useState(true);
+
+  const { loadingData, vehiclesData, transitRoutes, parkingSpots, providerRentals } = useDashboardData();
+
+  const tabs = getTabsForUser({ isCitizen, isProvider, isAdmin });
 
   useEffect(() => {
-    let mounted = true;
-    async function loadAll() {
-      setLoadingData(true);
-      const [v, t, p, r] = await Promise.all([
-        fetchVehicles(),
-        fetchTransitRoutes(),
-        fetchParkingSpots(),
-        fetchProviderRentals(),
-      ]);
-      if (!mounted) return;
-      setVehiclesData(v);
-      setTransitRoutes(t);
-      setParkingSpots(p);
-      setProviderRentals(r);
-      setLoadingData(false);
+    if (!tabs.includes(tab)) {
+      setTab('home');
     }
-    loadAll();
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  }, [tab, tabs]);
 
-  const vehicles = useMemo(() => {
+  const filteredVehicles = useMemo(() => {
     let list = [...vehiclesData];
-    if (vehicleType !== 'all') list = list.filter((v) => v.type === vehicleType);
+    if (vehicleType !== 'all') {
+      list = list.filter((vehicle) => vehicle.type === vehicleType);
+    }
+
     const maxRadius = parseFloat(radius) || 2;
-    return list.filter((v) => v.distance <= maxRadius);
+    return list.filter((vehicle) => vehicle.distance <= maxRadius);
   }, [vehiclesData, vehicleType, radius]);
 
-  const goReserve = (vehicle) => {
+  const reserveVehicle = (vehicle) => {
     setReserve(vehicle);
     setTab('search');
   };
 
-  const goPayment = () => {
+  const beginPayment = () => {
     if (!reservation) return;
-    const txId = `tx_${Date.now()}`;
-    startRental(reservation, txId);
+
+    const transactionId = `tx_${Date.now()}`;
+    startRental(reservation, transactionId);
     setPaymentDone(false);
     setTab('activeRental');
   };
 
-  const completeReturn = () => {
+  const returnVehicle = () => {
     if (!activeRental) return;
+
     const start = new Date(activeRental.startTime);
     const elapsedMin = Math.max(1, Math.floor((Date.now() - start.getTime()) / 60000));
     const totalCost = elapsedMin * (activeRental.vehicle?.ratePerMin || 0.25);
+
     endRental(totalCost, { transactionId: activeRental.paymentTxId });
     setPaymentDone(true);
   };
 
   return (
     <div className="dashboard">
-      <aside className="sidebar">
-        <div>
-          <h2>SUMMS</h2>
-          <p>{user?.name}</p>
-        </div>
-        <div className="stack-8">
-          {tabs.map((name) => (
-            <button key={name} className={`btn nav-btn ${tab === name ? 'nav-btn-active' : ''}`} onClick={() => setTab(name)}>
-              {labelForTab(name)}
-            </button>
-          ))}
-        </div>
-        <button className="btn btn-danger" onClick={logout}>Log Out</button>
-      </aside>
+      <Sidebar user={user} tabs={tabs} activeTab={tab} onSelectTab={setTab} onLogout={logout} />
 
       <main className="content">
         {loadingData && <div className="panel">Loading data from Supabase...</div>}
-        {isCitizen && tab === 'home' && (
-          <Section title="Quick actions" subtitle="Citizen dashboard">
-            <div className="grid-2">
-              <Card title="Find a vehicle" text="Scooters, bikes, and more in Montreal" action={<button className="btn btn-primary" onClick={() => setTab('search')}>Open</button>} />
-              <Card title="Public transit" text="Routes, schedules, delays" action={<button className="btn btn-primary" onClick={() => setTab('transit')}>Open</button>} />
-              <Card title="Parking" text="Available spaces nearby" action={<button className="btn btn-primary" onClick={() => setTab('parking')}>Open</button>} />
-              <Card title="Active rental" text="View or return your vehicle" action={<button className="btn btn-primary" onClick={() => setTab('activeRental')}>Open</button>} />
-            </div>
-          </Section>
+
+        {isCitizen && (
+          <CitizenViews
+            tab={tab}
+            onSelectTab={setTab}
+            vehicleType={vehicleType}
+            setVehicleType={setVehicleType}
+            radius={radius}
+            setRadius={setRadius}
+            vehicles={filteredVehicles}
+            reservation={reservation}
+            activeRental={activeRental}
+            paymentDone={paymentDone}
+            onReserveVehicle={reserveVehicle}
+            onCancelReservation={clearReservation}
+            onProceedPayment={beginPayment}
+            onReturnVehicle={returnVehicle}
+            transitRoutes={transitRoutes}
+            parkingSpots={parkingSpots}
+          />
         )}
 
-        {isCitizen && tab === 'search' && (
-          <Section title="Find vehicle" subtitle="Search and reserve">
-            <div className="panel stack-12">
-              <div className="row wrap gap-8">
-                {['all', 'scooter', 'bike'].map((type) => (
-                  <button key={type} className={`btn ${vehicleType === type ? 'btn-primary-soft' : 'btn-soft'}`} onClick={() => setVehicleType(type)}>
-                    {type}
-                  </button>
-                ))}
-              </div>
-              <label>
-                Radius (km)
-                <input value={radius} onChange={(e) => setRadius(e.target.value)} />
-              </label>
-            </div>
-
-            <div className="grid-2">
-              {vehicles.map((vehicle) => (
-                <Card
-                  key={vehicle.id}
-                  title={vehicle.name}
-                  text={`${vehicle.type} | ${vehicle.distance} km away | $${vehicle.ratePerMin}/min`}
-                  action={<button className="btn btn-primary" onClick={() => goReserve(vehicle)}>Reserve</button>}
-                />
-              ))}
-            </div>
-
-            {reservation && (
-              <div className="panel stack-12">
-                <h3>Reservation</h3>
-                <p>{reservation.name} | ${reservation.ratePerMin}/min</p>
-                <div className="row gap-8">
-                  <button className="btn btn-primary" onClick={goPayment}>Proceed to payment</button>
-                  <button className="btn btn-soft" onClick={clearReservation}>Cancel</button>
-                </div>
-              </div>
-            )}
-          </Section>
+        {isProvider && (
+          <ProviderViews
+            tab={tab}
+            vehiclesData={vehiclesData}
+            providerRentals={providerRentals}
+          />
         )}
 
-        {isCitizen && tab === 'transit' && (
-          <Section title="Public transit" subtitle="Routes and schedules">
-            <div className="grid-2">
-              {transitRoutes.map((route) => (
-                <Card
-                  key={route.id}
-                  title={route.line}
-                  text={`${route.from} -> ${route.to} | Next: ${route.nextDeparture}${route.delay ? ` | Delay: ${route.delay} min` : ''}`}
-                />
-              ))}
-            </div>
-          </Section>
-        )}
-
-        {isCitizen && tab === 'parking' && (
-          <Section title="Parking" subtitle="Available spaces nearby">
-            <div className="grid-2">
-              {parkingSpots.map((spot) => (
-                <Card key={spot.id} title={spot.address} text={`${spot.available}/${spot.total} spots | ${spot.distance} km`} />
-              ))}
-            </div>
-          </Section>
-        )}
-
-        {isCitizen && tab === 'activeRental' && (
-          <Section title="Active rental" subtitle="Track or return your vehicle">
-            {!activeRental && !paymentDone && <div className="panel">No active rental.</div>}
-            {activeRental && (
-              <div className="panel stack-12">
-                <h3>{activeRental.vehicle?.name}</h3>
-                <p>{activeRental.vehicle?.type}</p>
-                <p>Started: {new Date(activeRental.startTime).toLocaleTimeString()}</p>
-                <button className="btn btn-primary" onClick={completeReturn}>Return vehicle</button>
-              </div>
-            )}
-            {paymentDone && <div className="panel success">Rental complete. Receipt recorded.</div>}
-          </Section>
-        )}
-
-        {isProvider && tab === 'home' && (
-          <Section title="Provider dashboard" subtitle="Manage vehicles and rentals">
-            <Card title="SUMMS Management" text="Manage your fleet and review rental data." />
-          </Section>
-        )}
-
-        {isProvider && tab === 'vehicles' && <ProviderVehicles initialVehicles={vehiclesData} />}
-        {isProvider && tab === 'rentalData' && <ProviderRentalData rentals={providerRentals} />}
-
-        {isAdmin && tab === 'home' && (
-          <Section title="Admin dashboard" subtitle="System monitoring">
-            <Card title="SUMMS Management" text="View rental and gateway analytics." />
-          </Section>
-        )}
-
-        {isAdmin && tab === 'rentalAnalytics' && <RentalAnalytics />}
-        {isAdmin && tab === 'gatewayAnalytics' && <GatewayAnalytics />}
+        {isAdmin && <AdminViews tab={tab} />}
 
         {tab === 'profile' && <Profile user={user} role={user?.role} />}
       </main>
     </div>
+  );
+}
+
+function Sidebar({ user, tabs, activeTab, onSelectTab, onLogout }) {
+  return (
+    <aside className="sidebar">
+      <div>
+        <h2>SUMMS</h2>
+        <p>{user?.name}</p>
+      </div>
+
+      <div className="stack-8">
+        {tabs.map((tabName) => (
+          <button
+            key={tabName}
+            className={`btn nav-btn ${activeTab === tabName ? 'nav-btn-active' : ''}`}
+            onClick={() => onSelectTab(tabName)}
+          >
+            {TAB_LABELS[tabName] || tabName}
+          </button>
+        ))}
+      </div>
+
+      <button className="btn btn-danger" onClick={onLogout}>Log Out</button>
+    </aside>
+  );
+}
+
+function CitizenViews({
+  tab,
+  onSelectTab,
+  vehicleType,
+  setVehicleType,
+  radius,
+  setRadius,
+  vehicles,
+  reservation,
+  activeRental,
+  paymentDone,
+  onReserveVehicle,
+  onCancelReservation,
+  onProceedPayment,
+  onReturnVehicle,
+  transitRoutes,
+  parkingSpots,
+}) {
+  return (
+    <>
+      {tab === 'home' && (
+        <Section title="Quick actions" subtitle="Citizen dashboard">
+          <div className="grid-2">
+            <Card title="Find a vehicle" text="Scooters, bikes, and more in Montreal" action={<button className="btn btn-primary" onClick={() => onSelectTab('search')}>Open</button>} />
+            <Card title="Public transit" text="Routes, schedules, delays" action={<button className="btn btn-primary" onClick={() => onSelectTab('transit')}>Open</button>} />
+            <Card title="Parking" text="Available spaces nearby" action={<button className="btn btn-primary" onClick={() => onSelectTab('parking')}>Open</button>} />
+            <Card title="Active rental" text="View or return your vehicle" action={<button className="btn btn-primary" onClick={() => onSelectTab('activeRental')}>Open</button>} />
+          </div>
+        </Section>
+      )}
+
+      {tab === 'search' && (
+        <Section title="Find vehicle" subtitle="Search and reserve">
+          <div className="panel stack-12">
+            <div className="row wrap gap-8">
+              {['all', 'scooter', 'bike'].map((type) => (
+                <button key={type} className={`btn ${vehicleType === type ? 'btn-primary-soft' : 'btn-soft'}`} onClick={() => setVehicleType(type)}>
+                  {type}
+                </button>
+              ))}
+            </div>
+
+            <label>
+              Radius (km)
+              <input value={radius} onChange={(e) => setRadius(e.target.value)} />
+            </label>
+          </div>
+
+          <div className="grid-2">
+            {vehicles.map((vehicle) => (
+              <Card
+                key={vehicle.id}
+                title={vehicle.name}
+                text={`${vehicle.type} | ${vehicle.distance} km away | $${vehicle.ratePerMin}/min`}
+                action={<button className="btn btn-primary" onClick={() => onReserveVehicle(vehicle)}>Reserve</button>}
+              />
+            ))}
+          </div>
+
+          {reservation && (
+            <div className="panel stack-12">
+              <h3>Reservation</h3>
+              <p>{reservation.name} | ${reservation.ratePerMin}/min</p>
+              <div className="row gap-8">
+                <button className="btn btn-primary" onClick={onProceedPayment}>Proceed to payment</button>
+                <button className="btn btn-soft" onClick={onCancelReservation}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </Section>
+      )}
+
+      {tab === 'transit' && (
+        <Section title="Public transit" subtitle="Routes and schedules">
+          <div className="grid-2">
+            {transitRoutes.map((route) => (
+              <Card
+                key={route.id}
+                title={route.line}
+                text={`${route.from} -> ${route.to} | Next: ${route.nextDeparture}${route.delay ? ` | Delay: ${route.delay} min` : ''}`}
+              />
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {tab === 'parking' && (
+        <Section title="Parking" subtitle="Available spaces nearby">
+          <div className="grid-2">
+            {parkingSpots.map((spot) => (
+              <Card key={spot.id} title={spot.address} text={`${spot.available}/${spot.total} spots | ${spot.distance} km`} />
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {tab === 'activeRental' && (
+        <Section title="Active rental" subtitle="Track or return your vehicle">
+          {!activeRental && !paymentDone && <div className="panel">No active rental.</div>}
+
+          {activeRental && (
+            <div className="panel stack-12">
+              <h3>{activeRental.vehicle?.name}</h3>
+              <p>{activeRental.vehicle?.type}</p>
+              <p>Started: {new Date(activeRental.startTime).toLocaleTimeString()}</p>
+              <button className="btn btn-primary" onClick={onReturnVehicle}>Return vehicle</button>
+            </div>
+          )}
+
+          {paymentDone && <div className="panel success">Rental complete. Receipt recorded.</div>}
+        </Section>
+      )}
+    </>
+  );
+}
+
+function ProviderViews({ tab, vehiclesData, providerRentals }) {
+  return (
+    <>
+      {tab === 'home' && (
+        <Section title="Provider dashboard" subtitle="Manage vehicles and rentals">
+          <Card title="SUMMS Management" text="Manage your fleet and review rental data." />
+        </Section>
+      )}
+
+      {tab === 'vehicles' && <ProviderVehicles initialVehicles={vehiclesData} />}
+      {tab === 'rentalData' && <ProviderRentalData rentals={providerRentals} />}
+    </>
+  );
+}
+
+function AdminViews({ tab }) {
+  return (
+    <>
+      {tab === 'home' && (
+        <Section title="Admin dashboard" subtitle="System monitoring">
+          <Card title="SUMMS Management" text="View rental and gateway analytics." />
+        </Section>
+      )}
+
+      {tab === 'rentalAnalytics' && <RentalAnalytics />}
+      {tab === 'gatewayAnalytics' && <GatewayAnalytics />}
+    </>
   );
 }
 
@@ -365,13 +491,8 @@ function Card({ title, text, action }) {
 }
 
 function ProviderVehicles({ initialVehicles = [] }) {
-  const [vehicles, setVehicles] = useState([
-    ...(initialVehicles.length ? initialVehicles : [
-      { id: 'v1', type: 'scooter', name: 'Scooter #101', status: 'available', maintenance: 'ok' },
-      { id: 'v2', type: 'scooter', name: 'Scooter #102', status: 'available', maintenance: 'ok' },
-      { id: 'v3', type: 'bike', name: 'Bike #201', status: 'maintenance', maintenance: 'pending' },
-    ]),
-  ]);
+  const [vehicles, setVehicles] = useState(initialVehicles.length ? initialVehicles : FALLBACK_PROVIDER_VEHICLES);
+
   useEffect(() => {
     if (initialVehicles.length) {
       setVehicles(initialVehicles);
@@ -379,25 +500,38 @@ function ProviderVehicles({ initialVehicles = [] }) {
   }, [initialVehicles]);
 
   const addVehicle = () => {
-    setVehicles((prev) => [
-      ...prev,
-      { id: `v${Date.now()}`, type: 'scooter', name: `Vehicle #${prev.length + 1}`, status: 'available', maintenance: 'ok' },
+    setVehicles((previousVehicles) => [
+      ...previousVehicles,
+      {
+        id: `v${Date.now()}`,
+        type: 'scooter',
+        name: `Vehicle #${previousVehicles.length + 1}`,
+        status: 'available',
+        maintenance: 'ok',
+      },
     ]);
+  };
+
+  const toggleVehicleStatus = (vehicleId) => {
+    setVehicles((previousVehicles) => previousVehicles.map((vehicle) => {
+      if (vehicle.id !== vehicleId) return vehicle;
+
+      const nextStatus = vehicle.status === 'available' ? 'unavailable' : 'available';
+      return { ...vehicle, status: nextStatus };
+    }));
   };
 
   return (
     <Section title="Vehicles" subtitle="Fleet management">
       <button className="btn btn-primary" onClick={addVehicle}>Add vehicle</button>
+
       <div className="grid-2">
-        {vehicles.map((v) => (
-          <div className="card" key={v.id}>
-            <h3>{v.name}</h3>
-            <p>{v.type}</p>
-            <p>Status: {v.status}</p>
-            <button
-              className="btn btn-soft"
-              onClick={() => setVehicles((prev) => prev.map((item) => item.id === v.id ? { ...item, status: item.status === 'available' ? 'unavailable' : 'available' } : item))}
-            >
+        {vehicles.map((vehicle) => (
+          <div className="card" key={vehicle.id}>
+            <h3>{vehicle.name}</h3>
+            <p>{vehicle.type}</p>
+            <p>Status: {vehicle.status}</p>
+            <button className="btn btn-soft" onClick={() => toggleVehicleStatus(vehicle.id)}>
               Toggle status
             </button>
           </div>
@@ -411,6 +545,7 @@ function ProviderRentalData({ rentals = [] }) {
   return (
     <Section title="Rental records" subtitle="Manage and view rental data">
       {rentals.length === 0 && <div className="panel">No rental records found.</div>}
+
       <div className="grid-2">
         {rentals.map((record) => (
           <Card key={record.id} title={record.vehicle} text={`${record.user} | ${record.start} -> ${record.end} | $${record.cost}`} />
@@ -421,17 +556,10 @@ function ProviderRentalData({ rentals = [] }) {
 }
 
 function RentalAnalytics() {
-  const kpis = [
-    ['1,247', 'Rentals (30d)'],
-    ['342', 'Active users'],
-    ['Scooter', 'Top vehicle type'],
-    ['18 min', 'Avg. duration'],
-  ];
-
   return (
     <Section title="Rental analytics" subtitle="Usage trends and KPIs">
       <div className="grid-2">
-        {kpis.map(([value, label]) => (
+        {KPIS.map(([value, label]) => (
           <div className="card" key={label}>
             <h2>{value}</h2>
             <p>{label}</p>
@@ -472,19 +600,54 @@ function Profile({ user, role }) {
   );
 }
 
-function labelForTab(name) {
-  const labels = {
-    home: 'Home',
-    search: 'Find Vehicle',
-    transit: 'Transit',
-    parking: 'Parking',
-    activeRental: 'Active Rental',
-    vehicles: 'Vehicles',
-    rentalData: 'Rentals',
-    rentalAnalytics: 'Rental Analytics',
-    gatewayAnalytics: 'Gateway Analytics',
-    profile: 'Profile',
-  };
+function useDashboardData() {
+  const [vehiclesData, setVehiclesData] = useState([]);
+  const [transitRoutes, setTransitRoutes] = useState([]);
+  const [parkingSpots, setParkingSpots] = useState([]);
+  const [providerRentals, setProviderRentals] = useState([]);
+  const [loadingData, setLoadingData] = useState(true);
 
-  return labels[name] || name;
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadAllData() {
+      setLoadingData(true);
+
+      const [vehicles, routes, spots, rentals] = await Promise.all([
+        fetchVehicles(),
+        fetchTransitRoutes(),
+        fetchParkingSpots(),
+        fetchProviderRentals(),
+      ]);
+
+      if (!mounted) return;
+
+      setVehiclesData(vehicles);
+      setTransitRoutes(routes);
+      setParkingSpots(spots);
+      setProviderRentals(rentals);
+      setLoadingData(false);
+    }
+
+    loadAllData();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  return {
+    loadingData,
+    vehiclesData,
+    transitRoutes,
+    parkingSpots,
+    providerRentals,
+  };
+}
+
+function getTabsForUser({ isCitizen, isProvider, isAdmin }) {
+  if (isAdmin) return TABS.admin;
+  if (isProvider) return TABS.provider;
+  if (isCitizen) return TABS.citizen;
+  return TABS.citizen;
 }

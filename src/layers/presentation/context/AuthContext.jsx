@@ -15,8 +15,13 @@ function normalizeRole(role) {
   return VALID_ROLES.has(role) ? role : ROLES.CITIZEN;
 }
 
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
 function mapAuthError(error) {
   const message = (error?.message || '').toLowerCase();
+
   if (message.includes('invalid login credentials')) {
     return 'Invalid email or password.';
   }
@@ -29,76 +34,78 @@ function mapAuthError(error) {
   if (message.includes('password should be at least')) {
     return 'Password does not meet minimum requirements.';
   }
+
   return error?.message || 'Authentication failed.';
+}
+
+async function fetchProfileRole(userId) {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', userId)
+    .single();
+
+  if (error || !data?.role) {
+    return null;
+  }
+
+  return normalizeRole(data.role);
+}
+
+async function saveProfile({ id, email, name, role }) {
+  const profile = {
+    id,
+    email,
+    name,
+    role: normalizeRole(role),
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabase.from('profiles').upsert(profile, { onConflict: 'id' });
+  if (error) {
+    // Non-blocking so auth still works if profiles table is absent or restricted.
+    console.warn('Profile upsert failed:', error.message);
+  }
 }
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
 
-  const resolveRole = useCallback(async (authUser) => {
-    if (!authUser) return ROLES.CITIZEN;
-
-    const metadataRole = normalizeRole(authUser.user_metadata?.role);
-
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', authUser.id)
-      .single();
-
-    if (error || !data?.role) {
-      return metadataRole;
-    }
-
-    return normalizeRole(data.role);
-  }, []);
-
-  const upsertProfile = useCallback(async ({ id, email, name, role }) => {
-    const payload = {
-      id,
-      email,
-      name,
-      role: normalizeRole(role),
-      updated_at: new Date().toISOString(),
-    };
-
-    const { error } = await supabase.from('profiles').upsert(payload, { onConflict: 'id' });
-    if (error) {
-      // Non-blocking: auth should still work even if profiles table is not ready.
-      console.warn('Profile upsert failed:', error.message);
-    }
-  }, []);
-
   const toAppUser = useCallback(async (authUser, session) => {
     if (!authUser) return null;
+
     const metadata = authUser.user_metadata || {};
-    const resolvedRole = await resolveRole(authUser);
+    const metadataRole = normalizeRole(metadata.role);
+    const profileRole = await fetchProfileRole(authUser.id);
+
     return {
       id: authUser.id,
       email: authUser.email,
       name: metadata.name || authUser.email?.split('@')[0] || 'User',
-      role: resolvedRole,
+      role: profileRole || metadataRole,
       token: session?.access_token || '',
     };
-  }, [resolveRole]);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
 
-    supabase.auth.getSession()
-      .then(async ({ data }) => {
-        if (!mounted) return;
+    async function hydrateFromSession() {
+      try {
+        const { data } = await supabase.auth.getSession();
         const session = data?.session || null;
         const appUser = await toAppUser(session?.user, session);
+
         if (!mounted) return;
         setUser(appUser);
-        setAuthLoading(false);
-      })
-      .catch(() => {
+      } finally {
         if (!mounted) return;
         setAuthLoading(false);
-      });
+      }
+    }
+
+    hydrateFromSession();
 
     const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       const appUser = await toAppUser(session?.user, session || null);
@@ -114,11 +121,13 @@ export function AuthProvider({ children }) {
 
   const login = useCallback(async (email, password, expectedRole) => {
     const { data, error } = await supabase.auth.signInWithPassword({
-      email: email.trim().toLowerCase(),
+      email: normalizeEmail(email),
       password,
     });
 
-    if (error) throw new Error(mapAuthError(error));
+    if (error) {
+      throw new Error(mapAuthError(error));
+    }
 
     const appUser = await toAppUser(data?.user, data?.session || null);
     const normalizedExpectedRole = normalizeRole(expectedRole);
@@ -134,33 +143,38 @@ export function AuthProvider({ children }) {
 
   const register = useCallback(async (name, email, password, role = ROLES.CITIZEN) => {
     const normalizedRole = normalizeRole(role);
-    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedName = String(name || '').trim();
+    const normalizedEmail = normalizeEmail(email);
 
     const { data, error } = await supabase.auth.signUp({
       email: normalizedEmail,
       password,
       options: {
         data: {
-          name: name.trim(),
+          name: normalizedName,
           role: normalizedRole,
         },
       },
     });
 
-    if (error) throw new Error(mapAuthError(error));
+    if (error) {
+      throw new Error(mapAuthError(error));
+    }
 
     if (data?.user) {
-      await upsertProfile({
+      await saveProfile({
         id: data.user.id,
         email: normalizedEmail,
-        name: name.trim(),
+        name: normalizedName,
         role: normalizedRole,
       });
+
       const appUser = await toAppUser(data.user, data.session || null);
       setUser(appUser);
     }
+
     return data;
-  }, [toAppUser, upsertProfile]);
+  }, [toAppUser]);
 
   const logout = useCallback(async () => {
     await supabase.auth.signOut();
@@ -168,19 +182,22 @@ export function AuthProvider({ children }) {
   }, []);
 
   const resetPassword = useCallback(async (email) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+    const { error } = await supabase.auth.resetPasswordForEmail(normalizeEmail(email), {
       redirectTo: window.location.origin,
     });
-    if (error) throw new Error(mapAuthError(error));
+
+    if (error) {
+      throw new Error(mapAuthError(error));
+    }
   }, []);
 
   const value = {
     user,
+    authLoading,
     login,
     register,
     logout,
     resetPassword,
-    authLoading,
     isAuthenticated: Boolean(user),
     isCitizen: user?.role === ROLES.CITIZEN,
     isProvider: user?.role === ROLES.MOBILITY_PROVIDER,
@@ -191,7 +208,9 @@ export function AuthProvider({ children }) {
 }
 
 export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
-  return ctx;
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within AuthProvider');
+  }
+  return context;
 }
