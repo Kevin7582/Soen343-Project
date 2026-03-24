@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AuthProvider, ROLES, useAuth } from '../context/AuthContext';
 import { RentalProvider, useRental } from '../context/RentalContext';
 import {
+  completeParkingReservation,
   cancelParkingReservation,
   fetchParkingSpots,
   fetchProviderRentals,
@@ -11,6 +12,8 @@ import {
   fetchVehicles,
   planTransitTrip,
   reserveParkingSpot,
+  startParkingReservation,
+  updateParkingReservationDuration,
 } from '../../service-layer/mobilityService';
 
 const TABS = {
@@ -223,6 +226,9 @@ function Dashboard() {
         ]);
         if (!mounted) return;
         setParkingReservation(reservationData);
+        if (reservationData?.durationHours) {
+          setParkingDuration(String(reservationData.durationHours));
+        }
         setTransitPlans(plans);
       } catch (error) {
         if (!mounted) return;
@@ -297,11 +303,16 @@ function Dashboard() {
 
   const handleReserveParking = async (spot) => {
     if (!user?.id) return;
+    if (parkingReservation) {
+      setMobilityError('You can only manage one parking reservation at a time.');
+      return;
+    }
     setMobilityError('');
     const duration = Math.max(1, Number(parkingDuration) || 1);
     try {
       const reservationData = await reserveParkingSpot(user.id, spot, duration);
       setParkingReservation(reservationData);
+      setParkingDuration(String(reservationData.durationHours ?? duration));
       await refreshDashboardData();
     } catch (error) {
       setMobilityError(error?.message || 'Unable to reserve parking.');
@@ -317,6 +328,45 @@ function Dashboard() {
       await refreshDashboardData();
     } catch (error) {
       setMobilityError(error?.message || 'Unable to cancel parking reservation.');
+    }
+  };
+
+  const handleStartParking = async () => {
+    if (!parkingReservation) return;
+    setMobilityError('');
+    try {
+      const active = await startParkingReservation(parkingReservation);
+      setParkingReservation(active);
+      setParkingDuration(String(active.durationHours ?? parkingDuration));
+      await refreshDashboardData();
+    } catch (error) {
+      setMobilityError(error?.message || 'Unable to start parking session.');
+    }
+  };
+
+  const handleCompleteParking = async () => {
+    if (!parkingReservation) return;
+    setMobilityError('');
+    try {
+      await completeParkingReservation(parkingReservation);
+      setParkingReservation(null);
+      await refreshDashboardData();
+    } catch (error) {
+      setMobilityError(error?.message || 'Unable to complete parking reservation.');
+    }
+  };
+
+  const handleUpdateParkingDuration = async () => {
+    if (!parkingReservation) return;
+    setMobilityError('');
+    const duration = Math.max(1, Number(parkingDuration) || 1);
+    try {
+      const updated = await updateParkingReservationDuration(parkingReservation, duration);
+      setParkingReservation(updated);
+      setParkingDuration(String(updated.durationHours ?? duration));
+      await refreshDashboardData();
+    } catch (error) {
+      setMobilityError(error?.message || 'Unable to update parking duration.');
     }
   };
 
@@ -375,6 +425,9 @@ function Dashboard() {
             setParkingDuration={setParkingDuration}
             onReserveParking={handleReserveParking}
             onCancelParking={handleCancelParking}
+            onStartParking={handleStartParking}
+            onCompleteParking={handleCompleteParking}
+            onUpdateParkingDuration={handleUpdateParkingDuration}
           />
         )}
 
@@ -448,6 +501,9 @@ function CitizenViews({
   setParkingDuration,
   onReserveParking,
   onCancelParking,
+  onStartParking,
+  onCompleteParking,
+  onUpdateParkingDuration,
 }) {
   return (
     <>
@@ -546,15 +602,27 @@ function CitizenViews({
         <Section title="Parking" subtitle="Available spaces nearby">
           <div className="panel stack-12">
             <h3>Parking reservation</h3>
-            <label>
-              Duration (hours)
-              <input value={parkingDuration} onChange={(e) => setParkingDuration(e.target.value)} />
-            </label>
+            {(!parkingReservation || parkingReservation.status === 'reserved') && (
+              <label>
+                Duration (hours)
+                <input value={parkingDuration} onChange={(e) => setParkingDuration(e.target.value)} />
+              </label>
+            )}
             {parkingReservation && (
               <div className="stack-8">
                 <p>Reserved spot: {parkingReservation.spot?.address || parkingReservation.spotId}</p>
+                <p>Status: {parkingReservation.status}</p>
                 <p>Duration: {parkingReservation.durationHours}h</p>
                 <p>Estimated cost: ${parkingReservation.estimatedCost}</p>
+                {parkingReservation.status === 'reserved' && (
+                  <button className="btn btn-soft" onClick={onUpdateParkingDuration}>Update duration</button>
+                )}
+                {parkingReservation.status === 'reserved' && (
+                  <button className="btn btn-primary" onClick={onStartParking}>Start parking session</button>
+                )}
+                {parkingReservation.status === 'active' && (
+                  <button className="btn btn-primary" onClick={onCompleteParking}>Complete parking</button>
+                )}
                 <button className="btn btn-soft" onClick={onCancelParking}>Cancel reservation</button>
               </div>
             )}
@@ -566,7 +634,7 @@ function CitizenViews({
                 key={spot.id}
                 title={spot.address}
                 text={`${spot.available}/${spot.total} spots | ${spot.distance} km | $${(spot.pricePerHour ?? 2.5)}/h`}
-                action={<button className="btn btn-primary" disabled={spot.available <= 0} onClick={() => onReserveParking(spot)}>Reserve spot</button>}
+                action={<button className="btn btn-primary" disabled={spot.available <= 0 || Boolean(parkingReservation)} onClick={() => onReserveParking(spot)}>Reserve spot</button>}
               />
             ))}
           </div>
