@@ -2,10 +2,15 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AuthProvider, ROLES, useAuth } from '../context/AuthContext';
 import { RentalProvider, useRental } from '../context/RentalContext';
 import {
+  cancelParkingReservation,
   fetchParkingSpots,
   fetchProviderRentals,
   fetchTransitRoutes,
+  fetchUserParkingReservation,
+  fetchUserTransitPlans,
   fetchVehicles,
+  planTransitTrip,
+  reserveParkingSpot,
 } from '../../service-layer/mobilityService';
 
 const TABS = {
@@ -217,6 +222,12 @@ function Dashboard() {
   const [vehicleType, setVehicleType] = useState('all');
   const [radius, setRadius] = useState('2');
   const [paymentDone, setPaymentDone] = useState(false);
+  const [parkingReservation, setParkingReservation] = useState(null);
+  const [parkingDuration, setParkingDuration] = useState('1');
+  const [transitPlans, setTransitPlans] = useState([]);
+  const [transitFrom, setTransitFrom] = useState('Downtown');
+  const [transitTo, setTransitTo] = useState('Campus');
+  const [mobilityError, setMobilityError] = useState('');
 
   const { loadingData, vehiclesData, transitRoutes, parkingSpots, providerRentals, refreshDashboardData } = useDashboardData();
 
@@ -227,6 +238,33 @@ function Dashboard() {
       setTab('home');
     }
   }, [tab, tabs]);
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadUserMobilityData() {
+      if (!user?.id) {
+        setParkingReservation(null);
+        setTransitPlans([]);
+        return;
+      }
+      try {
+        const [reservationData, plans] = await Promise.all([
+          fetchUserParkingReservation(user.id),
+          fetchUserTransitPlans(user.id),
+        ]);
+        if (!mounted) return;
+        setParkingReservation(reservationData);
+        setTransitPlans(plans);
+      } catch (error) {
+        if (!mounted) return;
+        setMobilityError(error?.message || 'Unable to load parking/transit state.');
+      }
+    }
+    loadUserMobilityData();
+    return () => {
+      mounted = false;
+    };
+  }, [user?.id]);
 
   const filteredVehicles = useMemo(() => {
     let list = [...vehiclesData];
@@ -240,6 +278,7 @@ function Dashboard() {
 
   const handleReserveVehicle = async (vehicle) => {
     clearError();
+    setMobilityError('');
     try {
       await reserveVehicle(vehicle);
       await refreshDashboardData();
@@ -254,6 +293,7 @@ function Dashboard() {
 
     const transactionId = `tx_${Date.now()}`;
     clearError();
+    setMobilityError('');
     try {
       await startRental(transactionId);
       await refreshDashboardData();
@@ -272,12 +312,53 @@ function Dashboard() {
     const totalCost = elapsedMin * (activeRental.vehicle?.ratePerMin || 0.25);
 
     clearError();
+    setMobilityError('');
     try {
       await endRental(totalCost, { transactionId: activeRental.paymentTxId });
       await refreshDashboardData();
       setPaymentDone(true);
     } catch {
       // Error is shown from context state.
+    }
+  };
+
+  const handleReserveParking = async (spot) => {
+    if (!user?.id) return;
+    setMobilityError('');
+    const duration = Math.max(1, Number(parkingDuration) || 1);
+    try {
+      const reservationData = await reserveParkingSpot(user.id, spot, duration);
+      setParkingReservation(reservationData);
+      await refreshDashboardData();
+    } catch (error) {
+      setMobilityError(error?.message || 'Unable to reserve parking.');
+    }
+  };
+
+  const handleCancelParking = async () => {
+    if (!parkingReservation) return;
+    setMobilityError('');
+    try {
+      await cancelParkingReservation(parkingReservation);
+      setParkingReservation(null);
+      await refreshDashboardData();
+    } catch (error) {
+      setMobilityError(error?.message || 'Unable to cancel parking reservation.');
+    }
+  };
+
+  const handlePlanTransit = async (route) => {
+    if (!user?.id) return;
+    if (!transitFrom.trim() || !transitTo.trim()) {
+      setMobilityError('Enter both origin and destination to plan a transit trip.');
+      return;
+    }
+    setMobilityError('');
+    try {
+      const plan = await planTransitTrip(user.id, route, transitFrom.trim(), transitTo.trim());
+      setTransitPlans((prev) => [plan, ...prev].slice(0, 10));
+    } catch (error) {
+      setMobilityError(error?.message || 'Unable to plan transit trip.');
     }
   };
 
@@ -289,6 +370,7 @@ function Dashboard() {
         {loadingData && <div className="panel">Loading data from Supabase...</div>}
         {rentalLoading && <div className="panel">Syncing rental state...</div>}
         {!!rentalError && <div className="panel auth-error">{rentalError}</div>}
+        {!!mobilityError && <div className="panel auth-error">{mobilityError}</div>}
 
         {isCitizen && (
           <CitizenViews
@@ -308,6 +390,17 @@ function Dashboard() {
             onReturnVehicle={returnVehicle}
             transitRoutes={transitRoutes}
             parkingSpots={parkingSpots}
+            transitPlans={transitPlans}
+            transitFrom={transitFrom}
+            transitTo={transitTo}
+            setTransitFrom={setTransitFrom}
+            setTransitTo={setTransitTo}
+            onPlanTransit={handlePlanTransit}
+            parkingReservation={parkingReservation}
+            parkingDuration={parkingDuration}
+            setParkingDuration={setParkingDuration}
+            onReserveParking={handleReserveParking}
+            onCancelParking={handleCancelParking}
           />
         )}
 
@@ -369,6 +462,17 @@ function CitizenViews({
   onReturnVehicle,
   transitRoutes,
   parkingSpots,
+  transitPlans,
+  transitFrom,
+  transitTo,
+  setTransitFrom,
+  setTransitTo,
+  onPlanTransit,
+  parkingReservation,
+  parkingDuration,
+  setParkingDuration,
+  onReserveParking,
+  onCancelParking,
 }) {
   return (
     <>
@@ -426,13 +530,38 @@ function CitizenViews({
 
       {tab === 'transit' && (
         <Section title="Public transit" subtitle="Routes and schedules">
+          <div className="panel stack-12">
+            <h3>Plan a trip</h3>
+            <div className="row gap-8 wrap">
+              <label>
+                From
+                <input value={transitFrom} onChange={(e) => setTransitFrom(e.target.value)} />
+              </label>
+              <label>
+                To
+                <input value={transitTo} onChange={(e) => setTransitTo(e.target.value)} />
+              </label>
+            </div>
+          </div>
+
           <div className="grid-2">
             {transitRoutes.map((route) => (
               <Card
                 key={route.id}
                 title={route.line}
                 text={`${route.from} -> ${route.to} | Next: ${route.nextDeparture}${route.delay ? ` | Delay: ${route.delay} min` : ''}`}
+                action={<button className="btn btn-primary" onClick={() => onPlanTransit(route)}>Plan this route</button>}
               />
+            ))}
+          </div>
+
+          <div className="panel stack-8">
+            <h3>Recent transit plans</h3>
+            {transitPlans.length === 0 && <p>No planned trips yet.</p>}
+            {transitPlans.map((plan) => (
+              <p key={plan.id}>
+                {plan.from} {'->'} {plan.to} ({new Date(plan.plannedAt).toLocaleString()})
+              </p>
             ))}
           </div>
         </Section>
@@ -440,9 +569,30 @@ function CitizenViews({
 
       {tab === 'parking' && (
         <Section title="Parking" subtitle="Available spaces nearby">
+          <div className="panel stack-12">
+            <h3>Parking reservation</h3>
+            <label>
+              Duration (hours)
+              <input value={parkingDuration} onChange={(e) => setParkingDuration(e.target.value)} />
+            </label>
+            {parkingReservation && (
+              <div className="stack-8">
+                <p>Reserved spot: {parkingReservation.spot?.address || parkingReservation.spotId}</p>
+                <p>Duration: {parkingReservation.durationHours}h</p>
+                <p>Estimated cost: ${parkingReservation.estimatedCost}</p>
+                <button className="btn btn-soft" onClick={onCancelParking}>Cancel reservation</button>
+              </div>
+            )}
+          </div>
+
           <div className="grid-2">
             {parkingSpots.map((spot) => (
-              <Card key={spot.id} title={spot.address} text={`${spot.available}/${spot.total} spots | ${spot.distance} km`} />
+              <Card
+                key={spot.id}
+                title={spot.address}
+                text={`${spot.available}/${spot.total} spots | ${spot.distance} km | $${(spot.pricePerHour ?? 2.5)}/h`}
+                action={<button className="btn btn-primary" disabled={spot.available <= 0} onClick={() => onReserveParking(spot)}>Reserve spot</button>}
+              />
             ))}
           </div>
         </Section>
