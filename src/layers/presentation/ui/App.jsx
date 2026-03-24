@@ -246,6 +246,10 @@ function Dashboard() {
   }, [vehiclesData, vehicleType, radius]);
 
   const handleReserveVehicle = async (vehicle) => {
+    if (reservation || activeRental) {
+      setMobilityError('You can only have one vehicle reservation/rental at a time.');
+      return;
+    }
     clearError();
     setMobilityError('');
     try {
@@ -352,6 +356,7 @@ function Dashboard() {
             vehicles={filteredVehicles}
             reservation={reservation}
             activeRental={activeRental}
+            hasOpenVehicleFlow={Boolean(reservation || activeRental)}
             paymentDone={paymentDone}
             onReserveVehicle={handleReserveVehicle}
             onCancelReservation={clearReservation}
@@ -424,6 +429,7 @@ function CitizenViews({
   vehicles,
   reservation,
   activeRental,
+  hasOpenVehicleFlow,
   paymentDone,
   onReserveVehicle,
   onCancelReservation,
@@ -479,7 +485,7 @@ function CitizenViews({
                 key={vehicle.id}
                 title={vehicle.name}
                 text={`${vehicle.type} | ${vehicle.distance} km away | $${vehicle.ratePerMin}/min`}
-                action={<button className="btn btn-primary" onClick={() => onReserveVehicle(vehicle)}>Reserve</button>}
+                action={<button className="btn btn-primary" disabled={hasOpenVehicleFlow || vehicle.status !== 'available'} onClick={() => onReserveVehicle(vehicle)}>Reserve</button>}
               />
             ))}
           </div>
@@ -487,7 +493,7 @@ function CitizenViews({
           {reservation && (
             <div className="panel stack-12">
               <h3>Reservation</h3>
-              <p>{reservation.name} | ${reservation.ratePerMin}/min</p>
+              <p>{reservation.vehicle?.name || `Vehicle #${reservation.vehicleId}`} | ${reservation.vehicle?.ratePerMin ?? 0.25}/min</p>
               <div className="row gap-8">
                 <button className="btn btn-primary" onClick={onProceedPayment}>Proceed to payment</button>
                 <button className="btn btn-soft" onClick={onCancelReservation}>Cancel</button>
@@ -569,7 +575,16 @@ function CitizenViews({
 
       {tab === 'activeRental' && (
         <Section title="Active rental" subtitle="Track or return your vehicle">
-          {!activeRental && !paymentDone && <div className="panel">No active rental.</div>}
+          {!activeRental && reservation && (
+            <div className="panel stack-12">
+              <h3>Reservation ready</h3>
+              <p>{reservation.vehicle?.name || `Vehicle #${reservation.vehicleId}`}</p>
+              <p>{reservation.vehicle?.type || 'vehicle'}</p>
+              <button className="btn btn-primary" onClick={onProceedPayment}>Start rental now</button>
+            </div>
+          )}
+
+          {!activeRental && !reservation && !paymentDone && <div className="panel">No active rental.</div>}
 
           {activeRental && (
             <div className="panel stack-12">
