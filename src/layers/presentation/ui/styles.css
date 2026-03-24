@@ -169,6 +169,11 @@ label {
   background: transparent;
 }
 
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .btn-primary {
   background: var(--primary);
   color: #001622;
@@ -210,6 +215,15 @@ label {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
+}
+
+.auth-error {
+  border: 1px solid var(--error);
+  background: rgba(248, 113, 113, 0.12);
+  color: #fecaca;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 0.92rem;
 }
 
 @media (max-width: 900px) {

@@ -30,17 +30,21 @@ function Root() {
 
 function AuthScreen() {
   const [mode, setMode] = useState('login');
-  const { login, register } = useAuth();
+  const { login, register, resetPassword } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [role, setRole] = useState(ROLES.CITIZEN);
   const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState('');
 
   const submit = async (event) => {
     event.preventDefault();
+    setFormError('');
+
     if (!email.trim() || !password.trim() || (mode === 'register' && !name.trim())) {
-      window.alert('Please fill all required fields.');
+      setFormError('Please fill all required fields.');
       return;
     }
 
@@ -52,14 +56,37 @@ function AuthScreen() {
       }
 
       if (password.length < 6) {
-        window.alert('Password must be at least 6 characters.');
+        setFormError('Password must be at least 6 characters.');
+        return;
+      }
+
+      if (password !== confirmPassword) {
+        setFormError('Passwords do not match.');
         return;
       }
 
       await register(name.trim(), email.trim(), password, role);
       window.alert('Registered. If email confirmation is enabled, verify your email first.');
     } catch (error) {
-      window.alert(error?.message || 'Authentication error.');
+      setFormError(error?.message || 'Authentication error.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const onForgotPassword = async () => {
+    setFormError('');
+    if (!email.trim()) {
+      setFormError('Enter your email first, then click Reset password.');
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      await resetPassword(email.trim());
+      window.alert('Password reset email sent. Check your inbox.');
+    } catch (error) {
+      setFormError(error?.message || 'Could not send reset email.');
     } finally {
       setSubmitting(false);
     }
@@ -74,6 +101,14 @@ function AuthScreen() {
           {mode === 'register' && <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" />}
           <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" type="email" />
           <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" type="password" />
+          {mode === 'register' && (
+            <input
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              placeholder="Confirm password"
+              type="password"
+            />
+          )}
 
           <div className="role-row">
             <RoleButton label="Citizen" active={role === ROLES.CITIZEN} onClick={() => setRole(ROLES.CITIZEN)} />
@@ -81,9 +116,16 @@ function AuthScreen() {
             <RoleButton label="Admin" active={role === ROLES.ADMIN} onClick={() => setRole(ROLES.ADMIN)} />
           </div>
 
+          {!!formError && <div className="auth-error">{formError}</div>}
+
           <button className="btn btn-primary" type="submit" disabled={submitting}>
             {submitting ? 'Please wait...' : mode === 'login' ? 'Log In' : 'Register'}
           </button>
+          {mode === 'login' && (
+            <button className="btn btn-link" type="button" onClick={onForgotPassword} disabled={submitting}>
+              Forgot password?
+            </button>
+          )}
           <button className="btn btn-link" type="button" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
             {mode === 'login' ? 'Need an account? Register' : 'Already have an account? Log In'}
           </button>
