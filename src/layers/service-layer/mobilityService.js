@@ -44,28 +44,40 @@ function mapParkingSpot(item) {
 }
 
 function mapReservationRow(row, vehicle) {
+  const fallbackVehicle = vehicle ?? {
+    id: String(row.vehicle_id ?? ''),
+    type: 'vehicle',
+    name: `Vehicle #${row.vehicle_id ?? ''}`,
+    ratePerMin: 0.25,
+  };
   return {
     id: String(row.id ?? crypto.randomUUID()),
     userId: String(row.user_id ?? ''),
-    vehicleId: String(row.vehicle_id ?? vehicle?.id ?? ''),
+    vehicleId: String(row.vehicle_id ?? fallbackVehicle.id ?? ''),
     status: 'reserved',
     reservedAt: row.created_at ?? new Date().toISOString(),
-    vehicle,
+    vehicle: fallbackVehicle,
     localOnly: false,
   };
 }
 
 function mapRentalRow(row, vehicle) {
+  const fallbackVehicle = vehicle ?? {
+    id: String(row.vehicle_id ?? ''),
+    type: 'vehicle',
+    name: `Vehicle #${row.vehicle_id ?? ''}`,
+    ratePerMin: 0.25,
+  };
   return {
     id: String(row.id ?? crypto.randomUUID()),
     userId: String(row.user_id ?? ''),
-    vehicleId: String(row.vehicle_id ?? vehicle?.id ?? ''),
+    vehicleId: String(row.vehicle_id ?? fallbackVehicle.id ?? ''),
     status: row.status ?? 'active',
     startTime: row.start_time ?? row.created_at ?? new Date().toISOString(),
     endTime: row.end_time ?? null,
     paymentTxId: '',
     cost: Number(row.price ?? 0),
-    vehicle,
+    vehicle: fallbackVehicle,
     localOnly: false,
   };
 }
@@ -145,7 +157,7 @@ export async function fetchUserReservation(userId) {
   const { data, error } = await supabase
     .from('rentals')
     .select('*')
-    .eq('user_id', userId)
+    .eq('user_id', Number(userId))
     .eq('status', 'reserved')
     .order('id', { ascending: false })
     .limit(1)
@@ -161,7 +173,7 @@ export async function fetchUserActiveRental(userId) {
   const { data, error } = await supabase
     .from('rentals')
     .select('*')
-    .eq('user_id', userId)
+    .eq('user_id', Number(userId))
     .eq('status', 'active')
     .order('id', { ascending: false })
     .limit(1)
@@ -174,6 +186,29 @@ export async function fetchUserActiveRental(userId) {
 }
 
 export async function reserveVehicle(userId, vehicle) {
+  const [{ data: userOpenRentals }, { data: vehicleOpenRentals }] = await Promise.all([
+    supabase
+      .from('rentals')
+      .select('id,status')
+      .eq('user_id', Number(userId))
+      .in('status', ['reserved', 'active'])
+      .limit(1),
+    supabase
+      .from('rentals')
+      .select('id,status')
+      .eq('vehicle_id', Number(vehicle.id))
+      .in('status', ['reserved', 'active'])
+      .limit(1),
+  ]);
+
+  if (userOpenRentals?.length) {
+    throw new Error('You already have an active/reserved vehicle. Return or cancel it first.');
+  }
+
+  if (vehicleOpenRentals?.length || vehicle.available === false || vehicle.status === 'unavailable') {
+    throw new Error('This vehicle is already reserved by another user.');
+  }
+
   const payload = {
     user_id: Number(userId),
     vehicle_id: Number(vehicle.id),
@@ -215,6 +250,17 @@ export async function cancelReservation(reservation) {
 }
 
 export async function startRental(userId, reservation) {
+  const { data: existingActive } = await supabase
+    .from('rentals')
+    .select('id')
+    .eq('user_id', Number(userId))
+    .eq('status', 'active')
+    .limit(1);
+
+  if (existingActive?.length) {
+    throw new Error('You already have an active rental.');
+  }
+
   if (!reservation || reservation.localOnly) {
     return {
       id: `local-rent-${Date.now()}`,

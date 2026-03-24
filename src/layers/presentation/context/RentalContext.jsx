@@ -35,7 +35,7 @@ export function RentalProvider({ children }) {
         fetchUserReservation(user.id),
         fetchUserActiveRental(user.id),
       ]);
-      setReservation(dbReservation);
+      setReservation(dbActiveRental ? null : dbReservation);
       setActiveRental(dbActiveRental);
     } catch (error) {
       setRentalError(error?.message || 'Unable to load rental state.');
@@ -57,6 +57,9 @@ export function RentalProvider({ children }) {
     setRentalError('');
 
     try {
+      if (activeRental || reservation) {
+        throw new Error('You can only reserve one vehicle at a time.');
+      }
       const dbReservation = await reserveVehicleInService(user.id, vehicle);
       setReservation(dbReservation);
       return dbReservation;
@@ -66,7 +69,7 @@ export function RentalProvider({ children }) {
     } finally {
       setRentalLoading(false);
     }
-  }, [user?.id]);
+  }, [user?.id, activeRental, reservation]);
 
   const clearReservation = useCallback(async () => {
     if (!reservation) return;
