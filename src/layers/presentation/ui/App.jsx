@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AuthProvider, ROLES, useAuth } from '../context/AuthContext';
 import { RentalProvider, useRental } from '../context/RentalContext';
 import {
@@ -202,13 +202,23 @@ function RoleButton({ label, active, onClick }) {
 
 function Dashboard() {
   const { user, isCitizen, isProvider, isAdmin, logout } = useAuth();
-  const { reservation, activeRental, setReserve, clearReservation, startRental, endRental } = useRental();
+  const {
+    reservation,
+    activeRental,
+    reserveVehicle,
+    clearReservation,
+    startRental,
+    endRental,
+    rentalLoading,
+    rentalError,
+    clearError,
+  } = useRental();
   const [tab, setTab] = useState('home');
   const [vehicleType, setVehicleType] = useState('all');
   const [radius, setRadius] = useState('2');
   const [paymentDone, setPaymentDone] = useState(false);
 
-  const { loadingData, vehiclesData, transitRoutes, parkingSpots, providerRentals } = useDashboardData();
+  const { loadingData, vehiclesData, transitRoutes, parkingSpots, providerRentals, refreshDashboardData } = useDashboardData();
 
   const tabs = getTabsForUser({ isCitizen, isProvider, isAdmin });
 
@@ -228,29 +238,47 @@ function Dashboard() {
     return list.filter((vehicle) => vehicle.distance <= maxRadius);
   }, [vehiclesData, vehicleType, radius]);
 
-  const reserveVehicle = (vehicle) => {
-    setReserve(vehicle);
-    setTab('search');
+  const handleReserveVehicle = async (vehicle) => {
+    clearError();
+    try {
+      await reserveVehicle(vehicle);
+      await refreshDashboardData();
+      setTab('search');
+    } catch {
+      // Error is shown from context state.
+    }
   };
 
-  const beginPayment = () => {
+  const beginPayment = async () => {
     if (!reservation) return;
 
     const transactionId = `tx_${Date.now()}`;
-    startRental(reservation, transactionId);
-    setPaymentDone(false);
-    setTab('activeRental');
+    clearError();
+    try {
+      await startRental(transactionId);
+      await refreshDashboardData();
+      setPaymentDone(false);
+      setTab('activeRental');
+    } catch {
+      // Error is shown from context state.
+    }
   };
 
-  const returnVehicle = () => {
+  const returnVehicle = async () => {
     if (!activeRental) return;
 
     const start = new Date(activeRental.startTime);
     const elapsedMin = Math.max(1, Math.floor((Date.now() - start.getTime()) / 60000));
     const totalCost = elapsedMin * (activeRental.vehicle?.ratePerMin || 0.25);
 
-    endRental(totalCost, { transactionId: activeRental.paymentTxId });
-    setPaymentDone(true);
+    clearError();
+    try {
+      await endRental(totalCost, { transactionId: activeRental.paymentTxId });
+      await refreshDashboardData();
+      setPaymentDone(true);
+    } catch {
+      // Error is shown from context state.
+    }
   };
 
   return (
@@ -259,6 +287,8 @@ function Dashboard() {
 
       <main className="content">
         {loadingData && <div className="panel">Loading data from Supabase...</div>}
+        {rentalLoading && <div className="panel">Syncing rental state...</div>}
+        {!!rentalError && <div className="panel auth-error">{rentalError}</div>}
 
         {isCitizen && (
           <CitizenViews
@@ -272,7 +302,7 @@ function Dashboard() {
             reservation={reservation}
             activeRental={activeRental}
             paymentDone={paymentDone}
-            onReserveVehicle={reserveVehicle}
+            onReserveVehicle={handleReserveVehicle}
             onCancelReservation={clearReservation}
             onProceedPayment={beginPayment}
             onReturnVehicle={returnVehicle}
@@ -607,34 +637,27 @@ function useDashboardData() {
   const [providerRentals, setProviderRentals] = useState([]);
   const [loadingData, setLoadingData] = useState(true);
 
-  useEffect(() => {
-    let mounted = true;
-
-    async function loadAllData() {
+  const refreshDashboardData = useCallback(async () => {
+    try {
       setLoadingData(true);
-
       const [vehicles, routes, spots, rentals] = await Promise.all([
         fetchVehicles(),
         fetchTransitRoutes(),
         fetchParkingSpots(),
         fetchProviderRentals(),
       ]);
-
-      if (!mounted) return;
-
       setVehiclesData(vehicles);
       setTransitRoutes(routes);
       setParkingSpots(spots);
       setProviderRentals(rentals);
+    } finally {
       setLoadingData(false);
     }
-
-    loadAllData();
-
-    return () => {
-      mounted = false;
-    };
   }, []);
+
+  useEffect(() => {
+    refreshDashboardData();
+  }, [refreshDashboardData]);
 
   return {
     loadingData,
@@ -642,6 +665,7 @@ function useDashboardData() {
     transitRoutes,
     parkingSpots,
     providerRentals,
+    refreshDashboardData,
   };
 }
 
