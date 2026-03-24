@@ -343,9 +343,10 @@ export async function completeRental(activeRental, cost) {
 }
 
 async function setParkingSpotAvailability(spotId, availableCount) {
+  const safeCount = Math.max(0, Number(availableCount) || 0);
   const byAvailable = await supabase
     .from('parking_spots')
-    .update({ available: availableCount })
+    .update({ available: safeCount })
     .eq('id', spotId);
 
   if (byAvailable.error && !String(byAvailable.error.message).includes('column')) {
@@ -360,6 +361,16 @@ async function setParkingSpotAvailability(spotId, availableCount) {
   if (byAvailableSpots.error && !String(byAvailableSpots.error.message).includes('column')) {
     fallbackWarn('parking_spots.available_spots update', byAvailableSpots.error);
   }
+}
+
+async function adjustParkingSpotAvailabilityDelta(spotId, delta) {
+  const spot = await fetchParkingSpotById(spotId);
+  if (!spot) return;
+
+  const currentAvailable = Number(spot.available ?? 0);
+  const total = Number(spot.total ?? currentAvailable);
+  const next = Math.max(0, Math.min(total, currentAvailable + Number(delta)));
+  await setParkingSpotAvailability(spotId, next);
 }
 
 async function fetchParkingSpotById(spotId) {
@@ -377,9 +388,9 @@ export async function fetchUserParkingReservation(userId) {
   const { data, error } = await supabase
     .from('parking_reservations')
     .select('*')
-    .eq('user_id', userId)
+    .eq('user_id', Number(userId))
     .in('status', ['reserved', 'active'])
-    .order('created_at', { ascending: false })
+    .order('reserved_at', { ascending: false })
     .limit(1)
     .maybeSingle();
 
@@ -403,8 +414,31 @@ export async function reserveParkingSpot(userId, spot, durationHours = 1) {
   const safeDuration = Math.max(1, Number(durationHours) || 1);
   const estimatedCost = Number((safeDuration * (spot.pricePerHour ?? 2.5)).toFixed(2));
 
+  const [{ data: userOpenReservations }, { data: spotOpenReservations }] = await Promise.all([
+    supabase
+      .from('parking_reservations')
+      .select('id,status')
+      .eq('user_id', Number(userId))
+      .in('status', ['reserved', 'active'])
+      .limit(1),
+    supabase
+      .from('parking_reservations')
+      .select('id,status')
+      .eq('parking_spot_id', Number(spot.id))
+      .in('status', ['reserved', 'active'])
+      .limit(1),
+  ]);
+
+  if (userOpenReservations?.length) {
+    throw new Error('You already have an open parking reservation.');
+  }
+
+  if (spot.available <= 0 || spotOpenReservations?.length) {
+    throw new Error('This parking spot is no longer available.');
+  }
+
   const payload = {
-    user_id: userId,
+    user_id: Number(userId),
     parking_spot_id: Number(spot.id) || spot.id,
     status: 'reserved',
     reserved_at: now,
@@ -420,20 +454,10 @@ export async function reserveParkingSpot(userId, spot, durationHours = 1) {
 
   if (error) {
     fallbackWarn('reserve parking', error);
-    return {
-      id: `local-park-${Date.now()}`,
-      userId,
-      spotId: spot.id,
-      status: 'reserved',
-      reservedAt: now,
-      durationHours: safeDuration,
-      estimatedCost,
-      spot,
-      localOnly: true,
-    };
+    throw new Error(`Unable to reserve parking: ${error.message}`);
   }
 
-  await setParkingSpotAvailability(spot.id, Math.max(0, (spot.available ?? 0) - 1));
+  await adjustParkingSpotAvailabilityDelta(spot.id, -1);
   return {
     id: String(data.id ?? crypto.randomUUID()),
     userId: String(data.user_id ?? userId),
@@ -444,6 +468,141 @@ export async function reserveParkingSpot(userId, spot, durationHours = 1) {
     estimatedCost: Number(data.estimated_cost ?? estimatedCost),
     spot,
     localOnly: false,
+  };
+}
+
+export async function startParkingReservation(reservation) {
+  if (!reservation) {
+    throw new Error('No parking reservation selected.');
+  }
+
+  if (reservation.localOnly) {
+    return {
+      ...reservation,
+      status: 'active',
+      startedAt: new Date().toISOString(),
+    };
+  }
+
+  const startedAt = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('parking_reservations')
+    .update({
+      status: 'active',
+      started_at: startedAt,
+    })
+    .eq('id', reservation.id)
+    .eq('status', 'reserved')
+    .select('*')
+    .single();
+
+  if (error) {
+    fallbackWarn('start parking reservation', error);
+    throw new Error('Unable to start parking session.');
+  }
+
+  return {
+    id: String(data.id ?? reservation.id),
+    userId: String(data.user_id ?? reservation.userId),
+    spotId: String(data.parking_spot_id ?? reservation.spotId),
+    status: data.status ?? 'active',
+    reservedAt: data.reserved_at ?? reservation.reservedAt,
+    startedAt: data.started_at ?? startedAt,
+    durationHours: Number(data.duration_hours ?? reservation.durationHours ?? 1),
+    estimatedCost: Number(data.estimated_cost ?? reservation.estimatedCost ?? 0),
+    spot: reservation.spot,
+    localOnly: false,
+  };
+}
+
+export async function updateParkingReservationDuration(reservation, durationHours) {
+  if (!reservation) {
+    throw new Error('No parking reservation selected.');
+  }
+  if (reservation.status !== 'reserved') {
+    throw new Error('Duration can only be updated while reservation is reserved.');
+  }
+
+  const safeDuration = Math.max(1, Number(durationHours) || 1);
+  const rate = reservation.spot?.pricePerHour ?? 2.5;
+  const estimatedCost = Number((safeDuration * rate).toFixed(2));
+
+  if (reservation.localOnly) {
+    return {
+      ...reservation,
+      durationHours: safeDuration,
+      estimatedCost,
+    };
+  }
+
+  const { data, error } = await supabase
+    .from('parking_reservations')
+    .update({
+      duration_hours: safeDuration,
+      estimated_cost: estimatedCost,
+    })
+    .eq('id', reservation.id)
+    .eq('status', 'reserved')
+    .select('*')
+    .single();
+
+  if (error) {
+    fallbackWarn('update parking reservation duration', error);
+    throw new Error('Unable to update parking duration.');
+  }
+
+  return {
+    id: String(data.id ?? reservation.id),
+    userId: String(data.user_id ?? reservation.userId),
+    spotId: String(data.parking_spot_id ?? reservation.spotId),
+    status: data.status ?? reservation.status,
+    reservedAt: data.reserved_at ?? reservation.reservedAt,
+    startedAt: data.started_at ?? reservation.startedAt,
+    durationHours: Number(data.duration_hours ?? safeDuration),
+    estimatedCost: Number(data.estimated_cost ?? estimatedCost),
+    spot: reservation.spot,
+    localOnly: false,
+  };
+}
+
+export async function completeParkingReservation(reservation) {
+  if (!reservation) {
+    throw new Error('No parking reservation selected.');
+  }
+
+  const endedAt = new Date().toISOString();
+  const startedAt = reservation.startedAt ?? reservation.reservedAt ?? endedAt;
+  const elapsedMs = Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime());
+  const elapsedHours = Math.max(1, Math.ceil(elapsedMs / (1000 * 60 * 60)));
+  const rate = reservation.spot?.pricePerHour ?? 2.5;
+  const finalCost = Number((elapsedHours * rate).toFixed(2));
+
+  if (!reservation.localOnly) {
+    const { error } = await supabase
+      .from('parking_reservations')
+      .update({
+        status: 'completed',
+        ended_at: endedAt,
+        final_cost: finalCost,
+      })
+      .eq('id', reservation.id)
+      .in('status', ['reserved', 'active']);
+
+    if (error) {
+      fallbackWarn('complete parking reservation', error);
+      throw new Error('Unable to complete parking reservation.');
+    }
+  }
+
+  if (reservation.spot || reservation.spotId) {
+    await adjustParkingSpotAvailabilityDelta(reservation.spot?.id ?? reservation.spotId, +1);
+  }
+
+  return {
+    ...reservation,
+    status: 'completed',
+    endedAt,
+    finalCost,
   };
 }
 
@@ -460,8 +619,8 @@ export async function cancelParkingReservation(reservation) {
     return false;
   }
 
-  if (reservation.spot) {
-    await setParkingSpotAvailability(reservation.spot.id, (reservation.spot.available ?? 0) + 1);
+  if (reservation.spot || reservation.spotId) {
+    await adjustParkingSpotAvailabilityDelta(reservation.spot?.id ?? reservation.spotId, +1);
   }
   return true;
 }
