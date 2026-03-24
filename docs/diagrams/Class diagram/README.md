@@ -1,4 +1,4 @@
-# SUMMS UML Class Diagram (Phase 1 Requirements)
+# SUMMS UML Class Diagram (Design phase)
 
 ```mermaid
 classDiagram
