@@ -74,7 +74,6 @@ function AuthScreen() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [role, setRole] = useState(ROLES.CITIZEN);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
@@ -82,28 +81,9 @@ function AuthScreen() {
 
   const clearFormError = () => setFormError('');
 
-  const validateAuthForm = () => {
-    if (!email.trim() || !password.trim() || (mode === 'register' && !name.trim())) {
-      return 'Please fill all required fields.';
-    }
-    if (mode === 'register' && password.length < 6) {
-      return 'Password must be at least 6 characters.';
-    }
-    if (mode === 'register' && password !== confirmPassword) {
-      return 'Passwords do not match.';
-    }
-    return '';
-  };
-
   const submit = async (event) => {
     event.preventDefault();
     clearFormError();
-
-    const validationMessage = validateAuthForm();
-    if (validationMessage) {
-      setFormError(validationMessage);
-      return;
-    }
 
     try {
       setSubmitting(true);
@@ -123,11 +103,6 @@ function AuthScreen() {
 
   const onForgotPassword = async () => {
     clearFormError();
-
-    if (!email.trim()) {
-      setFormError('Enter your email first, then click Reset password.');
-      return;
-    }
 
     try {
       setSubmitting(true);
@@ -158,17 +133,8 @@ function AuthScreen() {
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" />
           )}
 
-          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" type="email" />
+          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" type="text" />
           <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" type="password" />
-
-          {isRegisterMode && (
-            <input
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Confirm password"
-              type="password"
-            />
-          )}
 
           <div className="role-row">
             <RoleButton label="Citizen" active={role === ROLES.CITIZEN} onClick={() => setRole(ROLES.CITIZEN)} />
