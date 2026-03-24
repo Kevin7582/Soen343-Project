@@ -4,8 +4,8 @@ import { supabase } from '../../data-layer/supabaseClient';
 const AuthContext = createContext(null);
 
 export const ROLES = {
-  CITIZEN: 'citizen',
-  MOBILITY_PROVIDER: 'mobility_provider',
+  CITIZEN: 'user',
+  MOBILITY_PROVIDER: 'provider',
   ADMIN: 'admin',
 };
 
@@ -61,6 +61,22 @@ async function getUserByEmail(email) {
 
   if (error) {
     throw new Error(`Users table read failed: ${error.message}`);
+  }
+
+  return data || null;
+}
+
+async function getUserByCredentials(email, password) {
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('email', normalizeEmail(email))
+    .eq('password', String(password || ''))
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Users table auth failed: ${error.message}`);
   }
 
   return data || null;
@@ -135,22 +151,14 @@ export function AuthProvider({ children }) {
 
   const login = useCallback(async (email, password, selectedRole) => {
     const normalizedEmail = normalizeEmail(email);
+    const row = await getUserByCredentials(normalizedEmail, password);
 
-    let row = await getUserByEmail(normalizedEmail);
-
-    // Lenient mode: auto-create user if not found.
     if (!row) {
-      row = await createUser({
-        email: normalizedEmail,
-        password,
-        role: selectedRole,
-      });
+      throw new Error('Invalid username or password.');
     }
 
-    // Lenient mode: if a role is selected, silently sync to that role.
     if (selectedRole && row.role !== normalizeRole(selectedRole)) {
-      await updateUserRole(row.id, selectedRole);
-      row.role = normalizeRole(selectedRole);
+      throw new Error(`This account is not registered as ${normalizeRole(selectedRole)}.`);
     }
 
     const appUser = makeAppUser({
