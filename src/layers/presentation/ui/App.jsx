@@ -91,6 +91,8 @@ function AuthScreen() {
       if (mode === 'login') {
         await login(email.trim(), password, role);
       } else {
+        const proceed = window.confirm('Create a new account with these values?');
+        if (!proceed) return;
         await register(name.trim(), email.trim(), password, role);
         window.alert('Registered. If email confirmation is enabled, verify your email first.');
       }
@@ -126,6 +128,7 @@ function AuthScreen() {
     <div className="auth-wrap">
       <div className="auth-card">
         <h1>SUMMS</h1>
+        <p><strong>Mode:</strong> {isRegisterMode ? 'REGISTER' : 'LOGIN'}</p>
         <p>Smart Urban Mobility Management</p>
 
         <form onSubmit={submit} className="stack-12">
