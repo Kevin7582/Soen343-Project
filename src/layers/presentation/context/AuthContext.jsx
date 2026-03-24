@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../data-layer/supabaseClient';
 
 const AuthContext = createContext(null);
@@ -10,6 +10,7 @@ export const ROLES = {
 };
 
 const VALID_ROLES = new Set(Object.values(ROLES));
+const LOCAL_USER_KEY = 'summs_local_user';
 
 function normalizeRole(role) {
   return VALID_ROLES.has(role) ? role : ROLES.CITIZEN;
@@ -19,52 +20,79 @@ function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
 }
 
-function mapAuthError(error) {
-  const message = (error?.message || '').toLowerCase();
-
-  if (message.includes('invalid login credentials')) {
-    return 'Invalid email or password.';
-  }
-  if (message.includes('email not confirmed')) {
-    return 'Email not confirmed. Please verify your email first.';
-  }
-  if (message.includes('already registered')) {
-    return 'This email is already registered.';
-  }
-  if (message.includes('password should be at least')) {
-    return 'Password does not meet minimum requirements.';
-  }
-
-  return error?.message || 'Authentication failed.';
+function makeAppUser({ id, email, name, role, token = '', source = 'users_table' }) {
+  return {
+    id: String(id),
+    email,
+    name: name || email?.split('@')[0] || 'User',
+    role: normalizeRole(role),
+    token,
+    source,
+  };
 }
 
-async function fetchProfileRole(userId) {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', userId)
-    .single();
+function persistLocalUser(user) {
+  localStorage.setItem(LOCAL_USER_KEY, JSON.stringify(user));
+}
 
-  if (error || !data?.role) {
+function clearLocalUser() {
+  localStorage.removeItem(LOCAL_USER_KEY);
+}
+
+function loadLocalUser() {
+  try {
+    const raw = localStorage.getItem(LOCAL_USER_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.email || !parsed?.id) return null;
+    return parsed;
+  } catch {
     return null;
   }
-
-  return normalizeRole(data.role);
 }
 
-async function saveProfile({ id, email, name, role }) {
-  const profile = {
-    id,
-    email,
-    name,
-    role: normalizeRole(role),
-    updated_at: new Date().toISOString(),
-  };
+async function getUserByEmail(email) {
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('email', normalizeEmail(email))
+    .limit(1)
+    .maybeSingle();
 
-  const { error } = await supabase.from('profiles').upsert(profile, { onConflict: 'id' });
   if (error) {
-    // Non-blocking so auth still works if profiles table is absent or restricted.
-    console.warn('Profile upsert failed:', error.message);
+    throw new Error(`Users table read failed: ${error.message}`);
+  }
+
+  return data || null;
+}
+
+async function createUser({ email, password, role }) {
+  const { data, error } = await supabase
+    .from('users')
+    .insert({
+      email: normalizeEmail(email),
+      password: String(password || '123456'),
+      role: normalizeRole(role),
+    })
+    .select('*')
+    .single();
+
+  if (error) {
+    throw new Error(`Users table insert failed: ${error.message}`);
+  }
+
+  return data;
+}
+
+async function updateUserRole(id, role) {
+  const { error } = await supabase
+    .from('users')
+    .update({ role: normalizeRole(role) })
+    .eq('id', id);
+
+  if (error) {
+    // Non-blocking for lenient auth flow.
+    console.warn('Role update skipped:', error.message);
   }
 }
 
@@ -72,126 +100,115 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
 
-  const toAppUser = useCallback(async (authUser, session) => {
-    if (!authUser) return null;
-
-    const metadata = authUser.user_metadata || {};
-    const metadataRole = normalizeRole(metadata.role);
-    const profileRole = await fetchProfileRole(authUser.id);
-
-    return {
-      id: authUser.id,
-      email: authUser.email,
-      name: metadata.name || authUser.email?.split('@')[0] || 'User',
-      role: profileRole || metadataRole,
-      token: session?.access_token || '',
-    };
+  const setLocalUser = useCallback((nextUser) => {
+    setUser(nextUser);
+    if (nextUser) {
+      persistLocalUser(nextUser);
+    }
   }, []);
 
   useEffect(() => {
     let mounted = true;
 
-    async function hydrateFromSession() {
+    async function hydrateSession() {
       try {
-        const { data } = await supabase.auth.getSession();
-        const session = data?.session || null;
-        const appUser = await toAppUser(session?.user, session);
-
+        const localUser = loadLocalUser();
         if (!mounted) return;
-        setUser(appUser);
+        setUser(localUser);
       } finally {
         if (!mounted) return;
         setAuthLoading(false);
       }
     }
 
-    hydrateFromSession();
+    hydrateSession();
 
-    const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      const appUser = await toAppUser(session?.user, session || null);
-      if (!mounted) return;
-      setUser(appUser);
+    const { data: listener } = supabase.auth.onAuthStateChange(() => {
+      // Keep lenient users-table local session as source of truth for now.
     });
 
     return () => {
       mounted = false;
       listener?.subscription?.unsubscribe();
     };
-  }, [toAppUser]);
+  }, []);
 
-  const login = useCallback(async (email, password, expectedRole) => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: normalizeEmail(email),
-      password,
-    });
-
-    if (error) {
-      throw new Error(mapAuthError(error));
-    }
-
-    const appUser = await toAppUser(data?.user, data?.session || null);
-    const normalizedExpectedRole = normalizeRole(expectedRole);
-
-    if (normalizedExpectedRole && appUser?.role !== normalizedExpectedRole) {
-      await supabase.auth.signOut();
-      throw new Error(`This account is not registered as ${normalizedExpectedRole.replace('_', ' ')}.`);
-    }
-
-    setUser(appUser);
-    return data;
-  }, [toAppUser]);
-
-  const register = useCallback(async (name, email, password, role = ROLES.CITIZEN) => {
-    const normalizedRole = normalizeRole(role);
-    const normalizedName = String(name || '').trim();
+  const login = useCallback(async (email, password, selectedRole) => {
     const normalizedEmail = normalizeEmail(email);
 
-    const { data, error } = await supabase.auth.signUp({
+    let row = await getUserByEmail(normalizedEmail);
+
+    // Lenient mode: auto-create user if not found.
+    if (!row) {
+      row = await createUser({
+        email: normalizedEmail,
+        password,
+        role: selectedRole,
+      });
+    }
+
+    // Lenient mode: if a role is selected, silently sync to that role.
+    if (selectedRole && row.role !== normalizeRole(selectedRole)) {
+      await updateUserRole(row.id, selectedRole);
+      row.role = normalizeRole(selectedRole);
+    }
+
+    const appUser = makeAppUser({
+      id: row.id,
       email: normalizedEmail,
-      password,
-      options: {
-        data: {
-          name: normalizedName,
-          role: normalizedRole,
-        },
-      },
+      role: row.role,
+      token: 'users-table-session',
+      source: 'users_table',
     });
 
-    if (error) {
-      throw new Error(mapAuthError(error));
-    }
+    setLocalUser(appUser);
+    return { source: 'users_table' };
+  }, [setLocalUser]);
 
-    if (data?.user) {
-      await saveProfile({
-        id: data.user.id,
+  const register = useCallback(async (name, email, password, role = ROLES.CITIZEN) => {
+    const normalizedEmail = normalizeEmail(email);
+
+    let row = await getUserByEmail(normalizedEmail);
+    if (!row) {
+      row = await createUser({
         email: normalizedEmail,
-        name: normalizedName,
-        role: normalizedRole,
+        password,
+        role,
       });
-
-      const appUser = await toAppUser(data.user, data.session || null);
-      setUser(appUser);
+    } else {
+      await updateUserRole(row.id, role);
+      row.role = normalizeRole(role);
     }
 
-    return data;
-  }, [toAppUser]);
+    const appUser = makeAppUser({
+      id: row.id,
+      email: normalizedEmail,
+      name: String(name || '').trim(),
+      role: row.role,
+      token: 'users-table-session',
+      source: 'users_table',
+    });
+
+    setLocalUser(appUser);
+    return { source: 'users_table' };
+  }, [setLocalUser]);
 
   const logout = useCallback(async () => {
-    await supabase.auth.signOut();
+    clearLocalUser();
     setUser(null);
-  }, []);
-
-  const resetPassword = useCallback(async (email) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(normalizeEmail(email), {
-      redirectTo: window.location.origin,
-    });
-
-    if (error) {
-      throw new Error(mapAuthError(error));
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // Ignore for lenient mode.
     }
   }, []);
 
-  const value = {
+  const resetPassword = useCallback(async () => {
+    // Lenient mode for student project: do not block on reset flow.
+    return;
+  }, []);
+
+  const value = useMemo(() => ({
     user,
     authLoading,
     login,
@@ -202,7 +219,7 @@ export function AuthProvider({ children }) {
     isCitizen: user?.role === ROLES.CITIZEN,
     isProvider: user?.role === ROLES.MOBILITY_PROVIDER,
     isAdmin: user?.role === ROLES.ADMIN,
-  };
+  }), [user, authLoading, login, register, logout, resetPassword]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
