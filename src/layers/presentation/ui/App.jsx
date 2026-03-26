@@ -565,38 +565,17 @@ function CitizenViews({
       {tab === 'transit' && (
         <Section title="Public transit" subtitle="Routes and schedules">
           <div className="panel stack-12">
-            <h3>Plan a trip</h3>
-            <div className="row gap-8 wrap">
-              <label>
-                From
-                <input value={transitFrom} onChange={(e) => setTransitFrom(e.target.value)} />
-              </label>
-              <label>
-                To
-                <input value={transitTo} onChange={(e) => setTransitTo(e.target.value)} />
-              </label>
-            </div>
-          </div>
-
-          <div className="grid-2">
-            {transitRoutes.map((route) => (
-              <Card
-                key={route.id}
-                title={route.line}
-                text={`${route.from} -> ${route.to} | Next: ${route.nextDeparture}${route.delay ? ` | Delay: ${route.delay} min` : ''}`}
-                action={<button className="btn btn-primary" onClick={() => onPlanTransit(route)}>Plan this route</button>}
-              />
-            ))}
-          </div>
-
-          <div className="panel stack-8">
-            <h3>Recent transit plans</h3>
-            {transitPlans.length === 0 && <p>No planned trips yet.</p>}
-            {transitPlans.map((plan) => (
-              <p key={plan.id}>
-                {plan.from} {'->'} {plan.to} ({new Date(plan.plannedAt).toLocaleString()})
-              </p>
-            ))}
+            <h3>External transit service</h3>
+            <p>Need full transit information? Click below to open STM.</p>
+            <a
+              className="btn btn-primary"
+              href="https://www.stm.info/en"
+              target="_blank"
+              rel="noreferrer"
+              style={{ width: 'fit-content', textDecoration: 'none' }}
+            >
+              Open STM Transit
+            </a>
           </div>
         </Section>
       )}
