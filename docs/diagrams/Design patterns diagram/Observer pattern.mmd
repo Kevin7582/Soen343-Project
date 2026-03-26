@@ -1,0 +1,53 @@
+```mermaid
+classDiagram
+    direction LR
+
+    class Subject {
+      <<interface>>
+      +subscribe(observer: Observer)
+      +unsubscribe(observer: Observer)
+      +notify(event: RentalEvent)
+    }
+
+    class Observer {
+      <<interface>>
+      +update(event: RentalEvent)
+    }
+
+    class SupabaseRealtimeSubject {
+      +subscribe(observer: Observer)
+      +unsubscribe(observer: Observer)
+      +notify(event: RentalEvent)
+      +onPostgresChange(payload)
+    }
+
+    class AdminDashboardService {
+      +subscribeToRentalChanges(callback)
+      +getDashboardSummary()
+      +unsubscribe(channel)
+    }
+
+    class AdminDashboard {
+      +mount()
+      +update(event: RentalEvent)
+      +refreshDashboard()
+      +render()
+    }
+
+    class RentalEvent {
+      +eventType: INSERT|UPDATE|DELETE
+      +table: rentals
+      +recordId: int
+      +timestamp: DateTime
+    }
+
+    Subject <|.. SupabaseRealtimeSubject
+    Observer <|.. AdminDashboard
+
+    SupabaseRealtimeSubject --> Observer : notify(event)
+    AdminDashboard --> AdminDashboardService : subscribeToRentalChanges()
+    AdminDashboardService --> SupabaseRealtimeSubject : register callback
+    AdminDashboard --> AdminDashboardService : getDashboardSummary()
+    SupabaseRealtimeSubject --> RentalEvent : publishes
+
+```

@@ -1,0 +1,56 @@
+```mermaid
+classDiagram
+    direction LR
+
+    class AdminDashboard {
+      +loadData()
+      +render(summary: DashboardSummary)
+    }
+
+    class DashboardFacade {
+      <<interface>>
+      +getDashboardSummary() DashboardSummary
+    }
+
+    class AdminDashboardService {
+      +getTotalUsers()
+      +getActiveRentals()
+      +getCompletedTripsToday()
+      +getUsageByVehicleType()
+      +getParkingUtilization()
+      +getActiveParking()
+      +getHourlyRentalTrend()
+      +getFleetStatus()
+      +getDashboardSummary() DashboardSummary
+    }
+
+    class DashboardSummary {
+      +totalUsers: int
+      +activeRentalsCount: int
+      +completedToday: int
+      +vehicleUsage: object
+      +parkingUtilization: list
+      +activeParking: int
+      +hourlyRentals: list
+      +fleetStatus: object
+      +monitoring: list
+      +alerts: list
+    }
+
+    class UsersTable
+    class RentalsTable
+    class VehiclesTable
+    class ParkingSpotsTable
+    class ParkingReservationsTable
+
+    DashboardFacade <|.. AdminDashboardService
+    AdminDashboard --> DashboardFacade : calls getDashboardSummary()
+    DashboardFacade --> DashboardSummary : returns
+
+    AdminDashboardService --> UsersTable : query
+    AdminDashboardService --> RentalsTable : query
+    AdminDashboardService --> VehiclesTable : query
+    AdminDashboardService --> ParkingSpotsTable : query
+    AdminDashboardService --> ParkingReservationsTable : query
+
+```
