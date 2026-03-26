@@ -1,0 +1,139 @@
+```mermaid
+classDiagram
+direction LR
+
+class App {
+  +render(): JSX
+}
+
+class Dashboard {
+  -tab: string
+  -vehicleType: string
+  -radius: string
+  -paymentDone: boolean
+  -parkingDuration: string
+  +loadAllData(): Promise~void~
+  +loadAnalyticsDirectly(): Promise~void~
+  +loadRealtimeDirectly(): void
+  +renderCitizenViews(): JSX
+  +renderProviderViews(): JSX
+  +renderAdminViews(): JSX
+  +render(): JSX
+}
+
+class AuthContext {
+  -user: AppUser
+  -authLoading: boolean
+  +login(email, password, selectedRole): Promise~Result~
+  +register(name, email, password, role): Promise~Result~
+  +logout(): Promise~void~
+  +updatePreferences(preferences): Promise~void~
+}
+
+class RentalContext {
+  -reservation: Reservation
+  -activeRental: Rental
+  -rentalLoading: boolean
+  +reserveVehicle(vehicle): Promise~Reservation~
+  +startRental(paymentTxId): Promise~Rental~
+  +endRental(cost): Promise~Rental~
+}
+
+class MobilityService {
+  +fetchVehicles(): Promise~Vehicle[]~
+  +fetchTransitRoutes(): Promise~TransitRoute[]~
+  +fetchParkingSpots(): Promise~ParkingSpot[]~
+  +reserveVehicle(userId, vehicle): Promise~Reservation~
+  +completeRental(rental, cost): Promise~Rental~
+}
+
+class RecommendationService {
+  +getRecommendations(preferences): Promise~RecommendationResult~
+}
+
+class SupabaseClientA {
+  +query(table, criteria): Promise~any~
+}
+class SupabaseClientB {
+  +query(table, criteria): Promise~any~
+}
+class SupabaseClientC {
+  +query(table, criteria): Promise~any~
+}
+class SupabaseClientD {
+  +query(table, criteria): Promise~any~
+}
+
+class UsersTable
+class RentalsTable
+class VehiclesTable
+class ParkingSpotsTable
+class ParkingReservationsTable
+class TransitPlansTable
+
+class Vehicle {
+  +id: string
+  +type: string
+  +name: string
+  +status: string
+  +ratePerMin: number
+}
+
+class ParkingSpot {
+  +id: string
+  +address: string
+  +available: number
+  +total: number
+  +pricePerHour: number
+}
+
+class Reservation {
+  +id: string
+  +userId: string
+  +vehicleId: string
+  +status: string
+}
+
+class Rental {
+  +id: string
+  +userId: string
+  +vehicleId: string
+  +status: string
+  +cost: number
+}
+
+App --> Dashboard
+Dashboard --> AuthContext
+Dashboard --> RentalContext
+Dashboard --> MobilityService
+Dashboard --> RecommendationService
+
+%% No Facade: Dashboard queries many data sources directly
+Dashboard --> UsersTable : direct query
+Dashboard --> RentalsTable : direct query
+Dashboard --> VehiclesTable : direct query
+Dashboard --> ParkingSpotsTable : direct query
+Dashboard --> ParkingReservationsTable : direct query
+Dashboard --> TransitPlansTable : direct query
+
+%% No Singleton: separate client instances
+AuthContext --> SupabaseClientA
+MobilityService --> SupabaseClientB
+RecommendationService --> SupabaseClientC
+Dashboard --> SupabaseClientD
+
+SupabaseClientA --> UsersTable
+SupabaseClientB --> RentalsTable
+SupabaseClientB --> VehiclesTable
+SupabaseClientB --> ParkingSpotsTable
+SupabaseClientC --> VehiclesTable
+SupabaseClientC --> ParkingSpotsTable
+SupabaseClientD --> RentalsTable
+SupabaseClientD --> ParkingReservationsTable
+
+%% No Factory Method: Dashboard owns role-specific rendering directly
+%% No Observer: Dashboard performs manual refresh / polling
+Reservation --> Vehicle
+Rental --> Vehicle
+
+```
