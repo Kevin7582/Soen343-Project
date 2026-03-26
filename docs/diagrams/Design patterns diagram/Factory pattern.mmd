@@ -1,0 +1,38 @@
+```mermaid
+classDiagram
+    class RoleDashboardCreator {
+      <<abstract>>
+      +createTabs() string[]
+      +createMainContent(renderers) JSXElement
+    }
+
+    class CitizenDashboardCreator {
+      +createTabs() string[]
+      +createMainContent(renderers) JSXElement
+    }
+
+    class ProviderDashboardCreator {
+      +createTabs() string[]
+      +createMainContent(renderers) JSXElement
+    }
+
+    class AdminDashboardCreator {
+      +createTabs() string[]
+      +createMainContent(renderers) JSXElement
+    }
+
+    class DashboardFactory {
+      +createRoleDashboardCreator(role) RoleDashboardCreator
+    }
+
+    class DashboardUI {
+      +render()
+    }
+
+    RoleDashboardCreator <|-- CitizenDashboardCreator
+    RoleDashboardCreator <|-- ProviderDashboardCreator
+    RoleDashboardCreator <|-- AdminDashboardCreator
+    DashboardUI --> DashboardFactory : calls
+    DashboardUI --> RoleDashboardCreator : uses product
+
+```
