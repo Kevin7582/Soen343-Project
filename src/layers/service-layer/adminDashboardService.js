@@ -1,27 +1,131 @@
 // service-layer/adminDashboardService.js
-// Facade Pattern: Single interface aggregating data from multiple Supabase tables
-// for the Admin Dashboard. Hides complexity of multi-table queries from the UI layer.
+// Facade Pattern: Aggregates analytics and monitoring data for admin views.
 
 import { supabase } from "../data-layer/supabaseClient";
 
+function createHourlyBuckets() {
+  return Array.from({ length: 24 }, (_, hour) => ({
+    hour,
+    label: `${String(hour).padStart(2, "0")}:00`,
+    rentals: 0,
+  }));
+}
+
+function buildMonitoringSnapshot({
+  activeRentalsCount,
+  parkingUtilization,
+  fleetStatus,
+  liveDataAvailable,
+}) {
+  const avgParkingUtilization =
+    parkingUtilization.length > 0
+      ? parkingUtilization.reduce((sum, spot) => sum + spot.utilizationRate, 0) /
+        parkingUtilization.length
+      : 0;
+
+  const fleetUtilization = Number(fleetStatus.utilizationRate || 0);
+
+  return [
+    {
+      id: "rental-service",
+      name: "Rental Service",
+      status: liveDataAvailable ? "healthy" : "degraded",
+      metric: `${activeRentalsCount} active rentals`,
+      detail:
+        activeRentalsCount > 0
+          ? "Live rental updates are flowing through the dashboard."
+          : "No active rentals at the moment.",
+    },
+    {
+      id: "parking-service",
+      name: "Parking Service",
+      status: avgParkingUtilization > 95 ? "warning" : "healthy",
+      metric: `${avgParkingUtilization.toFixed(1)}% avg occupancy`,
+      detail:
+        parkingUtilization.length > 0
+          ? "Parking utilization is being aggregated from current spot availability."
+          : "Parking spot data is unavailable right now.",
+    },
+    {
+      id: "fleet-availability",
+      name: "Fleet Availability",
+      status:
+        fleetStatus.total === 0
+          ? "degraded"
+          : fleetUtilization > 85
+          ? "warning"
+          : "healthy",
+      metric:
+        fleetStatus.total > 0
+          ? `${fleetStatus.available} available / ${fleetStatus.total} total`
+          : "No fleet snapshot",
+      detail:
+        fleetStatus.total > 0
+          ? "Vehicle inventory and current status are included in the live fleet snapshot."
+          : "Vehicle status data could not be loaded from the backend.",
+    },
+  ];
+}
+
+function buildAlerts({ parkingUtilization, fleetStatus, activeRentalsCount }) {
+  const alerts = [];
+  const crowdedSpots = parkingUtilization.filter((spot) => spot.utilizationRate >= 85);
+
+  crowdedSpots.forEach((spot) => {
+    alerts.push({
+      id: `parking-${spot.id}`,
+      level: spot.utilizationRate >= 95 ? "critical" : "warning",
+      title: "Parking demand spike",
+      message: `${spot.address} is at ${spot.utilizationRate.toFixed(1)}% utilization.`,
+    });
+  });
+
+  if (fleetStatus.total > 0 && fleetStatus.available <= Math.max(1, fleetStatus.total * 0.15)) {
+    alerts.push({
+      id: "fleet-availability",
+      level: "warning",
+      title: "Low vehicle availability",
+      message: `Only ${fleetStatus.available} of ${fleetStatus.total} vehicles are currently available.`,
+    });
+  }
+
+  if (activeRentalsCount >= 10) {
+    alerts.push({
+      id: "rental-throughput",
+      level: "healthy",
+      title: "High live activity",
+      message: `${activeRentalsCount} rentals are active right now.`,
+    });
+  }
+
+  if (alerts.length === 0) {
+    alerts.push({
+      id: "system-stable",
+      level: "healthy",
+      title: "System stable",
+      message: "No operational issues are currently detected by the dashboard.",
+    });
+  }
+
+  return alerts;
+}
+
 const AdminDashboardService = {
-  // --- USER STATS ---
   async getTotalUsers() {
     const { count, error } = await supabase
       .from("users")
       .select("*", { count: "exact", head: true });
     if (error) throw error;
-    return count;
+    return count ?? 0;
   },
 
-  // --- RENTAL STATS ---
   async getActiveRentals() {
     const { data, error } = await supabase
       .from("rentals")
       .select("id, vehicle_id, user_id, start_time, vehicles(type, location)")
       .eq("status", "active");
     if (error) throw error;
-    return data;
+    return data ?? [];
   },
 
   async getCompletedTripsToday() {
@@ -34,7 +138,7 @@ const AdminDashboardService = {
       .eq("status", "completed")
       .gte("end_time", startOfDay.toISOString());
     if (error) throw error;
-    return count;
+    return count ?? 0;
   },
 
   async getUsageByVehicleType() {
@@ -45,29 +149,26 @@ const AdminDashboardService = {
     if (error) throw error;
 
     const counts = { bike: 0, scooter: 0, other: 0 };
-    data.forEach(({ vehicles }) => {
+    (data ?? []).forEach(({ vehicles }) => {
       const type = vehicles?.type?.toLowerCase();
-      if (type === "bike") counts.bike++;
-      else if (type === "scooter") counts.scooter++;
-      else counts.other++;
+      if (type === "bike") counts.bike += 1;
+      else if (type === "scooter") counts.scooter += 1;
+      else counts.other += 1;
     });
     return counts;
   },
 
-  // --- PARKING STATS ---
   async getParkingUtilization() {
     const { data, error } = await supabase
       .from("parking_spots")
       .select("id, address, available, total");
     if (error) throw error;
 
-    return data.map((spot) => ({
+    return (data ?? []).map((spot) => ({
       ...spot,
       utilized: spot.total - spot.available,
       utilizationRate:
-        spot.total > 0
-          ? (((spot.total - spot.available) / spot.total) * 100).toFixed(1)
-          : 0,
+        spot.total > 0 ? ((spot.total - spot.available) / spot.total) * 100 : 0,
     }));
   },
 
@@ -77,10 +178,60 @@ const AdminDashboardService = {
       .select("*", { count: "exact", head: true })
       .eq("status", "active");
     if (error) throw error;
-    return count;
+    return count ?? 0;
   },
 
-  // --- AGGREGATED SUMMARY (main dashboard load) ---
+  async getHourlyRentalTrend() {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const { data, error } = await supabase
+      .from("rentals")
+      .select("id, start_time")
+      .gte("start_time", startOfDay.toISOString());
+    if (error) throw error;
+
+    const buckets = createHourlyBuckets();
+    (data ?? []).forEach((rental) => {
+      if (!rental.start_time) return;
+      const hour = new Date(rental.start_time).getHours();
+      if (buckets[hour]) {
+        buckets[hour].rentals += 1;
+      }
+    });
+
+    return buckets;
+  },
+
+  async getFleetStatus() {
+    const { data, error } = await supabase
+      .from("vehicles")
+      .select("*");
+    if (error) throw error;
+
+    const fleet = data ?? [];
+    const total = fleet.length;
+    const available = fleet.filter((vehicle) => vehicle.available !== false).length;
+    const maintenance = fleet.filter((vehicle) => vehicle.maintenance === "pending").length;
+    const inUse = Math.max(0, total - available - maintenance);
+    const utilizationRate = total > 0 ? ((inUse / total) * 100).toFixed(1) : "0.0";
+
+    const byType = fleet.reduce((acc, vehicle) => {
+      const type = vehicle.type?.toLowerCase?.() || "other";
+      acc[type] = (acc[type] || 0) + 1;
+      return acc;
+    }, {});
+
+    return {
+      total,
+      available,
+      inUse,
+      maintenance,
+      utilizationRate,
+      byType,
+    };
+  },
+
   async getDashboardSummary() {
     const [
       totalUsers,
@@ -89,6 +240,8 @@ const AdminDashboardService = {
       vehicleUsage,
       parkingUtilization,
       activeParking,
+      hourlyRentals,
+      fleetStatus,
     ] = await Promise.all([
       this.getTotalUsers(),
       this.getActiveRentals(),
@@ -96,35 +249,65 @@ const AdminDashboardService = {
       this.getUsageByVehicleType(),
       this.getParkingUtilization(),
       this.getActiveParking(),
+      this.getHourlyRentalTrend(),
+      this.getFleetStatus(),
     ]);
+
+    const activeRentalsCount = activeRentals.length;
+    const monitoring = buildMonitoringSnapshot({
+      activeRentalsCount,
+      parkingUtilization,
+      fleetStatus,
+      liveDataAvailable: true,
+    });
+    const alerts = buildAlerts({
+      parkingUtilization,
+      fleetStatus,
+      activeRentalsCount,
+    });
 
     return {
       totalUsers,
-      activeRentalsCount: activeRentals.length,
+      activeRentalsCount,
       activeRentals,
       completedToday,
       vehicleUsage,
       parkingUtilization,
       activeParking,
+      hourlyRentals,
+      fleetStatus,
+      monitoring,
+      alerts,
     };
   },
 
-  // --- REAL-TIME SUBSCRIPTION (Observer Pattern) ---
-  // Subscribes to live changes on the rentals table.
-  // The dashboard component is the Observer; Supabase is the Subject.
-  subscribeToRentalChanges(callback) {
-    return supabase
-      .channel("rentals-admin-channel")
-      .on(
+  subscribeToMonitoringChanges(callback, onStatusChange) {
+    const channel = supabase.channel("admin-monitoring-channel");
+    const tables = [
+      "rentals",
+      "vehicles",
+      "parking_spots",
+      "parking_reservations",
+      "users",
+    ];
+
+    tables.forEach((table) => {
+      channel.on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "rentals" },
-        callback
-      )
-      .subscribe();
+        { event: "*", schema: "public", table },
+        (payload) => callback?.({ ...payload, table })
+      );
+    });
+
+    return channel.subscribe((status) => {
+      onStatusChange?.(status);
+    });
   },
 
   unsubscribe(channel) {
-    supabase.removeChannel(channel);
+    if (channel) {
+      supabase.removeChannel(channel);
+    }
   },
 };
 
