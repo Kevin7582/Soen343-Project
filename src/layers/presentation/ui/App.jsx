@@ -4,6 +4,7 @@ import { RentalProvider, useRental } from '../context/RentalContext';
 import AdminDashboard from "./AdminDashboard";
 import RecommendationService from '../../service-layer/recommendationService';
 import { createRoleDashboardCreator } from './roleDashboardFactory';
+import { supabase } from '../../data-layer/supabaseClient';
 import {
   completeParkingReservation,
   cancelParkingReservation,
@@ -706,48 +707,95 @@ function Card({ title, text, action }) {
 }
 
 function ProviderVehicles({ initialVehicles = [] }) {
-  const [vehicles, setVehicles] = useState(initialVehicles.length ? initialVehicles : FALLBACK_PROVIDER_VEHICLES);
+  const [vehicles, setVehicles] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (initialVehicles.length) {
-      setVehicles(initialVehicles);
+    async function load() {
+      const { data, error } = await supabase
+        .from('vehicles')
+        .select('*');
+      if (!error && data) {
+        setVehicles(data);
+      } else {
+        setVehicles(FALLBACK_PROVIDER_VEHICLES);
+      }
+      setLoading(false);
     }
-  }, [initialVehicles]);
+    load();
+  }, []);
 
-  const addVehicle = () => {
-    setVehicles((previousVehicles) => [
-      ...previousVehicles,
-      {
-        id: `v${Date.now()}`,
-        type: 'scooter',
-        name: `Vehicle #${previousVehicles.length + 1}`,
-        status: 'available',
-        maintenance: 'ok',
-      },
-    ]);
+  const addVehicle = async () => {
+  const type = window.prompt('Vehicle type (bike or scooter):', 'scooter');
+  if (!type) return;
+  
+  const newVehicle = {
+    type: type.toLowerCase(),
+    location: 'Montreal',
+    available: true,
+    provider_id: 1,
+  };
+  const { data, error } = await supabase
+    .from('vehicles')
+    .insert(newVehicle)
+    .select()
+    .single();
+  if (!error && data) {
+    setVehicles((prev) => [...prev, data]);
+  }
+};
+
+  const toggleVehicleStatus = async (vehicleId) => {
+    const vehicle = vehicles.find((v) => v.id === vehicleId);
+    if (!vehicle) return;
+    const newAvailable = !vehicle.available;
+    const { error } = await supabase
+      .from('vehicles')
+      .update({ available: newAvailable })
+      .eq('id', vehicleId);
+    if (!error) {
+      setVehicles((prev) =>
+        prev.map((v) =>
+          v.id === vehicleId ? { ...v, available: newAvailable } : v
+        )
+      );
+    }
   };
 
-  const toggleVehicleStatus = (vehicleId) => {
-    setVehicles((previousVehicles) => previousVehicles.map((vehicle) => {
-      if (vehicle.id !== vehicleId) return vehicle;
-
-      const nextStatus = vehicle.status === 'available' ? 'unavailable' : 'available';
-      return { ...vehicle, status: nextStatus };
-    }));
+  const removeVehicle = async (vehicleId) => {
+    const { error } = await supabase
+      .from('vehicles')
+      .delete()
+      .eq('id', vehicleId);
+    if (!error) {
+      setVehicles((prev) => prev.filter((v) => v.id !== vehicleId));
+    }
   };
+
+  if (loading) return (
+    <Section title="Vehicles" subtitle="Fleet management">
+      <div className="panel">Loading...</div>
+    </Section>
+  );
 
   return (
     <Section title="Vehicles" subtitle="Fleet management">
       <button className="btn btn-primary" onClick={addVehicle}>Add vehicle</button>
-
       <div className="grid-2">
         {vehicles.map((vehicle) => (
           <div className="card" key={vehicle.id}>
-            <h3>{vehicle.name}</h3>
+            <h3>{vehicle.type} #{vehicle.id}</h3>
             <p>{vehicle.type}</p>
-            <p>Status: {vehicle.status}</p>
+            <p>Status: {vehicle.available ? 'available' : 'unavailable'}</p>
             <button className="btn btn-soft" onClick={() => toggleVehicleStatus(vehicle.id)}>
               Toggle status
+            </button>
+            <button
+              className="btn btn-soft"
+              style={{ color: '#ef4444', marginTop: '8px' }}
+              onClick={() => removeVehicle(vehicle.id)}
+            >
+              Remove
             </button>
           </div>
         ))}
@@ -755,7 +803,6 @@ function ProviderVehicles({ initialVehicles = [] }) {
     </Section>
   );
 }
-
 function ProviderRentalData({ rentals = [] }) {
   return (
     <Section title="Rental records" subtitle="Manage and view rental data">
