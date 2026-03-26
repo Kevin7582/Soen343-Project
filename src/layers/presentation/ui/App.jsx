@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AuthProvider, ROLES, useAuth } from '../context/AuthContext';
 import { RentalProvider, useRental } from '../context/RentalContext';
 import AdminDashboard from "./AdminDashboard";
+import RecommendationService from '../../service-layer/recommendationService';
 import {
   completeParkingReservation,
   cancelParkingReservation,
@@ -18,13 +19,14 @@ import {
 } from '../../service-layer/mobilityService';
 
 const TABS = {
-  citizen: ['home', 'search', 'transit', 'parking', 'activeRental', 'profile'],
+  citizen: ['home', 'recommendations', 'search', 'transit', 'parking', 'activeRental', 'profile'],
   provider: ['home', 'vehicles', 'rentalData', 'profile'],
   admin: ['home', 'rentalAnalytics', 'gatewayAnalytics', 'adminDashboard', 'profile'],
 };
 
 const TAB_LABELS = {
   home: 'Home',
+  recommendations: 'For You',
   search: 'Find Vehicle',
   transit: 'Transit',
   parking: 'Parking',
@@ -173,7 +175,7 @@ function RoleButton({ label, active, onClick }) {
 }
 
 function Dashboard() {
-  const { user, isCitizen, isProvider, isAdmin, logout } = useAuth();
+  const { user, isCitizen, isProvider, isAdmin, logout, updatePreferences } = useAuth();
   const {
     reservation,
     activeRental,
@@ -393,6 +395,7 @@ function Dashboard() {
         {isCitizen && (
           <CitizenViews
             tab={tab}
+            user={user}
             onSelectTab={setTab}
             vehicleType={vehicleType}
             setVehicleType={setVehicleType}
@@ -436,7 +439,7 @@ function Dashboard() {
 
         {isAdmin && <AdminViews tab={tab} />}
 
-        {tab === 'profile' && <Profile user={user} role={user?.role} />}
+        {tab === 'profile' && <Profile user={user} role={user?.role} onUpdatePreferences={updatePreferences} />}
       </main>
     </div>
   );
@@ -469,6 +472,7 @@ function Sidebar({ user, tabs, activeTab, onSelectTab, onLogout }) {
 
 function CitizenViews({
   tab,
+  user,
   onSelectTab,
   vehicleType,
   setVehicleType,
@@ -504,6 +508,7 @@ function CitizenViews({
     <>
       {tab === 'home' && (
         <Section title="Quick actions" subtitle="Citizen dashboard">
+          <RecommendationBanner user={user} onSelectTab={onSelectTab} />
           <div className="grid-2">
             <Card title="Find a vehicle" text="Scooters, bikes, and more in Montreal" action={<button className="btn btn-primary" onClick={() => onSelectTab('search')}>Open</button>} />
             <Card title="Public transit" text="Routes, schedules, delays" action={<button className="btn btn-primary" onClick={() => onSelectTab('transit')}>Open</button>} />
@@ -512,6 +517,8 @@ function CitizenViews({
           </div>
         </Section>
       )}
+
+      {tab === 'recommendations' && <RecommendationsView user={user} onSelectTab={onSelectTab} />}
 
       {tab === 'search' && (
         <Section title="Find vehicle" subtitle="Search and reserve">
@@ -791,14 +798,198 @@ function GatewayAnalytics() {
   return <AdminDashboard mode="gatewayMonitoring" />;
 }
 
-function Profile({ user, role }) {
+function RecommendationBanner({ user, onSelectTab }) {
+  const [summary, setSummary] = useState('');
+
+  useEffect(() => {
+    if (!user?.preferredCity && !user?.preferredMobilityType) {
+      setSummary('Set your preferred city and mobility type in your Profile to get personalized tips.');
+      return;
+    }
+    let mounted = true;
+    RecommendationService.getRecommendations({
+      preferredCity: user.preferredCity,
+      preferredMobilityType: user.preferredMobilityType,
+    }).then((result) => {
+      if (mounted && result.recommendations.length > 0) {
+        setSummary(result.recommendations[0].message);
+      }
+    }).catch(() => {});
+    return () => { mounted = false; };
+  }, [user?.preferredCity, user?.preferredMobilityType]);
+
+  if (!summary) return null;
+
   return (
-    <Section title="Profile" subtitle="Account details">
+    <div className="panel" style={{ borderColor: 'var(--primary)', background: 'rgba(56,189,248,0.08)' }}>
+      <p style={{ color: 'var(--primary)', fontWeight: 600, margin: 0 }}>{summary}</p>
+      <button className="btn btn-primary" style={{ marginTop: 8, width: 'fit-content' }} onClick={() => onSelectTab('recommendations')}>
+        View all recommendations
+      </button>
+    </div>
+  );
+}
+
+function RecommendationsView({ user, onSelectTab }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+    RecommendationService.getRecommendations({
+      preferredCity: user?.preferredCity,
+      preferredMobilityType: user?.preferredMobilityType,
+    }).then((result) => {
+      if (mounted) { setData(result); setLoading(false); }
+    }).catch(() => {
+      if (mounted) setLoading(false);
+    });
+    return () => { mounted = false; };
+  }, [user?.preferredCity, user?.preferredMobilityType]);
+
+  return (
+    <Section title="For You" subtitle="Personalized travel recommendations">
+      <div className="panel stack-8">
+        <h3>Your preferences</h3>
+        <p>Preferred city: {user?.preferredCity || 'Not set'}</p>
+        <p>Preferred mobility: {user?.preferredMobilityType || 'Not set'}</p>
+        <button className="btn btn-soft" style={{ width: 'fit-content' }} onClick={() => onSelectTab('profile')}>
+          Edit preferences
+        </button>
+      </div>
+
+      {loading && <div className="panel">Loading recommendations...</div>}
+
+      {!loading && data && (
+        <>
+          {data.recommendations.map((rec, i) => (
+            <div
+              key={i}
+              className="panel"
+              style={{
+                borderColor: rec.type === 'success' ? 'var(--success)' : rec.type === 'warning' ? 'var(--warning)' : 'var(--primary)',
+                background: rec.type === 'success' ? 'rgba(52,211,153,0.08)' : rec.type === 'warning' ? 'rgba(251,191,36,0.08)' : 'rgba(56,189,248,0.06)',
+              }}
+            >
+              <p style={{
+                color: rec.type === 'success' ? 'var(--success)' : rec.type === 'warning' ? 'var(--warning)' : 'var(--primary)',
+                fontWeight: 600,
+                margin: 0,
+              }}>
+                {rec.message}
+              </p>
+            </div>
+          ))}
+
+          {data.vehicleSuggestions.length > 0 && (
+            <>
+              <h3>Suggested vehicles</h3>
+              <div className="grid-2">
+                {data.vehicleSuggestions.map((v) => (
+                  <Card
+                    key={v.id}
+                    title={v.name || `${v.type} #${v.id}`}
+                    text={`${v.type} | ${v.location || 'Nearby'} | $${v.rate_per_min ?? 0.25}/min`}
+                    action={
+                      <button className="btn btn-primary" onClick={() => onSelectTab('search')}>
+                        Find & reserve
+                      </button>
+                    }
+                  />
+                ))}
+              </div>
+            </>
+          )}
+
+          {data.parkingSuggestions.length > 0 && (
+            <>
+              <h3>Parking near you</h3>
+              <div className="grid-2">
+                {data.parkingSuggestions.map((p) => (
+                  <Card
+                    key={p.id}
+                    title={p.address || p.location || 'Parking'}
+                    text={`${p.available ?? p.available_spots ?? 0}/${p.total ?? p.total_spots ?? 0} spots | $${p.price_per_hour ?? 2.5}/h`}
+                    action={
+                      <button className="btn btn-primary" onClick={() => onSelectTab('parking')}>
+                        Reserve spot
+                      </button>
+                    }
+                  />
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </Section>
+  );
+}
+
+function Profile({ user, role, onUpdatePreferences }) {
+  const [prefCity, setPrefCity] = useState(user?.preferredCity || '');
+  const [prefType, setPrefType] = useState(user?.preferredMobilityType || '');
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setPrefCity(user?.preferredCity || '');
+    setPrefType(user?.preferredMobilityType || '');
+  }, [user?.preferredCity, user?.preferredMobilityType]);
+
+  const savePreferences = async () => {
+    if (onUpdatePreferences) {
+      await onUpdatePreferences({ preferredCity: prefCity.trim(), preferredMobilityType: prefType });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    }
+  };
+
+  return (
+    <Section title="Profile" subtitle="Account details and preferences">
       <div className="card stack-8">
         <p>Name: {user?.name || '-'}</p>
         <p>Email: {user?.email || '-'}</p>
         <p>Role: {role || '-'}</p>
       </div>
+
+      {user?.role === 'user' && (
+        <div className="card stack-12">
+          <h3>Travel preferences</h3>
+          <label>
+            Preferred city
+            <input
+              value={prefCity}
+              onChange={(e) => setPrefCity(e.target.value)}
+              placeholder="e.g. Montreal, Laval"
+            />
+          </label>
+          <label>
+            Preferred mobility type
+            <div className="row gap-8" style={{ marginTop: 6 }}>
+              {['bike', 'scooter'].map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  className={`btn ${prefType === type ? 'btn-primary-soft' : 'btn-soft'}`}
+                  onClick={() => setPrefType(type)}
+                >
+                  {type === 'bike' ? 'Bike' : 'Scooter'}
+                </button>
+              ))}
+              {prefType && (
+                <button type="button" className="btn btn-link" onClick={() => setPrefType('')}>
+                  Clear
+                </button>
+              )}
+            </div>
+          </label>
+          <button className="btn btn-primary" style={{ width: 'fit-content' }} onClick={savePreferences}>
+            Save preferences
+          </button>
+          {saved && <p style={{ color: 'var(--success)', margin: 0 }}>Preferences saved!</p>}
+        </div>
+      )}
     </Section>
   );
 }
