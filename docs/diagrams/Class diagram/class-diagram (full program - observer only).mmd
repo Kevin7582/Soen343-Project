@@ -1,0 +1,143 @@
+classDiagram
+direction LR
+
+class App {
+  +render(): JSX
+}
+
+class Dashboard {
+  -tab: string
+  +renderCitizenViews(): JSX
+  +renderProviderViews(): JSX
+  +renderAdminViews(): JSX
+  +render(): JSX
+}
+
+class AuthContext {
+  -user: AppUser
+  -authLoading: boolean
+  +login(email, password, selectedRole): Promise~Result~
+  +register(name, email, password, role): Promise~Result~
+  +logout(): Promise~void~
+}
+
+class RentalContext {
+  -reservation: Reservation
+  -activeRental: Rental
+  -rentalLoading: boolean
+  -rentalError: string
+  +reserveVehicle(vehicle): Promise~Reservation~
+  +startRental(paymentTxId): Promise~Rental~
+  +endRental(cost): Promise~Rental~
+}
+
+class MobilityService {
+  +fetchVehicles(): Promise~Vehicle[]~
+  +fetchTransitRoutes(): Promise~TransitRoute[]~
+  +fetchParkingSpots(): Promise~ParkingSpot[]~
+  +reserveVehicle(userId, vehicle): Promise~Reservation~
+}
+
+class RecommendationService {
+  +getRecommendations(preferences): Promise~RecommendationResult~
+}
+
+class AdminDashboardService {
+  +getDashboardSummary(): Promise~DashboardSummary~
+  +subscribeToMonitoringChanges(callback, onStatusChange): Channel
+  +unsubscribe(channel): void
+}
+
+class AdminDashboard {
+  -data: DashboardSummary
+  -events: DashboardEvent[]
+  -connectionStatus: string
+  +loadData(): Promise~void~
+  +update(event): void
+  +render(): JSX
+}
+
+class Subject {
+  <<interface>>
+  +subscribe(observer): void
+  +unsubscribe(observer): void
+  +notify(event): void
+}
+
+class Observer {
+  <<interface>>
+  +update(event): void
+}
+
+class SupabaseRealtimeSubject {
+  +subscribe(observer): void
+  +unsubscribe(observer): void
+  +notify(event): void
+}
+
+class SupabaseClient {
+  +query(table, criteria): Promise~any~
+}
+
+class RentalEvent {
+  +eventType: string
+  +table: string
+  +recordId: int
+  +timestamp: DateTime
+}
+
+class Vehicle {
+  +id: string
+  +type: string
+  +status: string
+}
+
+class ParkingSpot {
+  +id: string
+  +address: string
+  +available: number
+  +total: number
+}
+
+class Reservation {
+  +id: string
+  +userId: string
+  +vehicleId: string
+  +status: string
+}
+
+class Rental {
+  +id: string
+  +userId: string
+  +vehicleId: string
+  +status: string
+}
+
+class DashboardSummary {
+  +totalUsers: number
+  +activeRentalsCount: number
+  +completedToday: number
+}
+
+App --> Dashboard
+Dashboard --> AuthContext
+Dashboard --> RentalContext
+Dashboard --> MobilityService
+Dashboard --> RecommendationService
+Dashboard --> AdminDashboard
+AdminDashboard --> AdminDashboardService
+
+Subject <|.. SupabaseRealtimeSubject
+Observer <|.. AdminDashboard
+SupabaseRealtimeSubject --> AdminDashboard : notify(event)
+SupabaseRealtimeSubject --> RentalEvent : publishes
+AdminDashboardService --> SupabaseRealtimeSubject : register callback
+
+AuthContext --> SupabaseClient
+MobilityService --> SupabaseClient
+RecommendationService --> SupabaseClient
+AdminDashboardService --> SupabaseClient
+
+Reservation --> Vehicle
+Rental --> Vehicle
+
