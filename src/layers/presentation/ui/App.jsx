@@ -3,6 +3,7 @@ import { AuthProvider, ROLES, useAuth } from '../context/AuthContext';
 import { RentalProvider, useRental } from '../context/RentalContext';
 import AdminDashboard from "./AdminDashboard";
 import RecommendationService from '../../service-layer/recommendationService';
+import { createRoleDashboardCreator } from './roleDashboardFactory';
 import {
   completeParkingReservation,
   cancelParkingReservation,
@@ -17,12 +18,6 @@ import {
   startParkingReservation,
   updateParkingReservationDuration,
 } from '../../service-layer/mobilityService';
-
-const TABS = {
-  citizen: ['home', 'recommendations', 'search', 'transit', 'parking', 'activeRental', 'profile'],
-  provider: ['home', 'vehicles', 'rentalData', 'profile'],
-  admin: ['home', 'rentalAnalytics', 'gatewayAnalytics', 'adminDashboard', 'profile'],
-};
 
 const TAB_LABELS = {
   home: 'Home',
@@ -175,7 +170,7 @@ function RoleButton({ label, active, onClick }) {
 }
 
 function Dashboard() {
-  const { user, isCitizen, isProvider, isAdmin, logout, updatePreferences } = useAuth();
+  const { user, logout, updatePreferences } = useAuth();
   const {
     reservation,
     activeRental,
@@ -200,7 +195,11 @@ function Dashboard() {
 
   const { loadingData, vehiclesData, transitRoutes, parkingSpots, providerRentals, refreshDashboardData } = useDashboardData();
 
-  const tabs = getTabsForUser({ isCitizen, isProvider, isAdmin });
+  const roleDashboardCreator = useMemo(
+    () => createRoleDashboardCreator(user?.role),
+    [user?.role]
+  );
+  const tabs = useMemo(() => roleDashboardCreator.createTabs(), [roleDashboardCreator]);
 
   useEffect(() => {
     if (!tabs.includes(tab)) {
@@ -382,6 +381,53 @@ function Dashboard() {
     }
   };
 
+  const roleMainContent = roleDashboardCreator.createMainContent({
+    renderCitizen: () => (
+      <CitizenViews
+        tab={tab}
+        user={user}
+        onSelectTab={setTab}
+        vehicleType={vehicleType}
+        setVehicleType={setVehicleType}
+        radius={radius}
+        setRadius={setRadius}
+        vehicles={filteredVehicles}
+        reservation={reservation}
+        activeRental={activeRental}
+        hasOpenVehicleFlow={Boolean(reservation || activeRental)}
+        paymentDone={paymentDone}
+        onReserveVehicle={handleReserveVehicle}
+        onCancelReservation={clearReservation}
+        onProceedPayment={beginPayment}
+        onReturnVehicle={returnVehicle}
+        transitRoutes={transitRoutes}
+        parkingSpots={parkingSpots}
+        transitPlans={transitPlans}
+        transitFrom={transitFrom}
+        transitTo={transitTo}
+        setTransitFrom={setTransitFrom}
+        setTransitTo={setTransitTo}
+        onPlanTransit={handlePlanTransit}
+        parkingReservation={parkingReservation}
+        parkingDuration={parkingDuration}
+        setParkingDuration={setParkingDuration}
+        onReserveParking={handleReserveParking}
+        onCancelParking={handleCancelParking}
+        onStartParking={handleStartParking}
+        onCompleteParking={handleCompleteParking}
+        onUpdateParkingDuration={handleUpdateParkingDuration}
+      />
+    ),
+    renderProvider: () => (
+      <ProviderViews
+        tab={tab}
+        vehiclesData={vehiclesData}
+        providerRentals={providerRentals}
+      />
+    ),
+    renderAdmin: () => <AdminViews tab={tab} />,
+  });
+
   return (
     <div className="dashboard">
       <Sidebar user={user} tabs={tabs} activeTab={tab} onSelectTab={setTab} onLogout={logout} />
@@ -392,52 +438,7 @@ function Dashboard() {
         {!!rentalError && <div className="panel auth-error">{rentalError}</div>}
         {!!mobilityError && <div className="panel auth-error">{mobilityError}</div>}
 
-        {isCitizen && (
-          <CitizenViews
-            tab={tab}
-            user={user}
-            onSelectTab={setTab}
-            vehicleType={vehicleType}
-            setVehicleType={setVehicleType}
-            radius={radius}
-            setRadius={setRadius}
-            vehicles={filteredVehicles}
-            reservation={reservation}
-            activeRental={activeRental}
-            hasOpenVehicleFlow={Boolean(reservation || activeRental)}
-            paymentDone={paymentDone}
-            onReserveVehicle={handleReserveVehicle}
-            onCancelReservation={clearReservation}
-            onProceedPayment={beginPayment}
-            onReturnVehicle={returnVehicle}
-            transitRoutes={transitRoutes}
-            parkingSpots={parkingSpots}
-            transitPlans={transitPlans}
-            transitFrom={transitFrom}
-            transitTo={transitTo}
-            setTransitFrom={setTransitFrom}
-            setTransitTo={setTransitTo}
-            onPlanTransit={handlePlanTransit}
-            parkingReservation={parkingReservation}
-            parkingDuration={parkingDuration}
-            setParkingDuration={setParkingDuration}
-            onReserveParking={handleReserveParking}
-            onCancelParking={handleCancelParking}
-            onStartParking={handleStartParking}
-            onCompleteParking={handleCompleteParking}
-            onUpdateParkingDuration={handleUpdateParkingDuration}
-          />
-        )}
-
-        {isProvider && (
-          <ProviderViews
-            tab={tab}
-            vehiclesData={vehiclesData}
-            providerRentals={providerRentals}
-          />
-        )}
-
-        {isAdmin && <AdminViews tab={tab} />}
+        {roleMainContent}
 
         {tab === 'profile' && <Profile user={user} role={user?.role} onUpdatePreferences={updatePreferences} />}
       </main>
@@ -1033,9 +1034,3 @@ function useDashboardData() {
   };
 }
 
-function getTabsForUser({ isCitizen, isProvider, isAdmin }) {
-  if (isAdmin) return TABS.admin;
-  if (isProvider) return TABS.provider;
-  if (isCitizen) return TABS.citizen;
-  return TABS.citizen;
-}
