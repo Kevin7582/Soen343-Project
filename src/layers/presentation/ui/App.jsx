@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AuthProvider, ROLES, useAuth } from '../context/AuthContext';
 import { RentalProvider, useRental } from '../context/RentalContext';
+import AdminDashboard from "./AdminDashboard";
 import {
   completeParkingReservation,
   cancelParkingReservation,
@@ -19,7 +20,7 @@ import {
 const TABS = {
   citizen: ['home', 'search', 'transit', 'parking', 'activeRental', 'profile'],
   provider: ['home', 'vehicles', 'rentalData', 'profile'],
-  admin: ['home', 'rentalAnalytics', 'gatewayAnalytics', 'profile'],
+  admin: ['home', 'rentalAnalytics', 'gatewayAnalytics', 'adminDashboard', 'profile'],
 };
 
 const TAB_LABELS = {
@@ -33,6 +34,7 @@ const TAB_LABELS = {
   rentalAnalytics: 'Rental Analytics',
   gatewayAnalytics: 'Gateway Analytics',
   profile: 'Profile',
+  adminDashboard: 'Admin Dashboard',
 };
 
 const KPIS = [
@@ -696,6 +698,7 @@ function AdminViews({ tab }) {
 
       {tab === 'rentalAnalytics' && <RentalAnalytics />}
       {tab === 'gatewayAnalytics' && <GatewayAnalytics />}
+      {tab === 'adminDashboard' && <AdminDashboard />}
     </>
   );
 }
