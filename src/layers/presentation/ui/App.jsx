@@ -37,13 +37,6 @@ const TAB_LABELS = {
   adminDashboard: 'Admin Dashboard',
 };
 
-const KPIS = [
-  ['1,247', 'Rentals (30d)'],
-  ['342', 'Active users'],
-  ['Scooter', 'Top vehicle type'],
-  ['18 min', 'Avg. duration'],
-];
-
 const FALLBACK_PROVIDER_VEHICLES = [
   { id: 'v1', type: 'scooter', name: 'Scooter #101', status: 'available', maintenance: 'ok' },
   { id: 'v2', type: 'scooter', name: 'Scooter #102', status: 'available', maintenance: 'ok' },
@@ -791,36 +784,11 @@ function ProviderRentalData({ rentals = [] }) {
 }
 
 function RentalAnalytics() {
-  return (
-    <Section title="Rental analytics" subtitle="Usage trends and KPIs">
-      <div className="grid-2">
-        {KPIS.map(([value, label]) => (
-          <div className="card" key={label}>
-            <h2>{value}</h2>
-            <p>{label}</p>
-          </div>
-        ))}
-      </div>
-    </Section>
-  );
+  return <AdminDashboard mode="rentalAnalytics" />;
 }
 
 function GatewayAnalytics() {
-  return (
-    <Section title="Gateway analytics" subtitle="API performance and health">
-      <div className="card stack-8">
-        <p>Total requests: 12,450</p>
-        <p>Avg response time: 42 ms</p>
-        <p>Error rate: 0.1%</p>
-      </div>
-      <div className="card stack-8">
-        <p>Rental Service: 5,200 req</p>
-        <p>Parking Service: 3,100 req</p>
-        <p>Public Transport: 2,800 req</p>
-        <p>Analytics: 1,350 req</p>
-      </div>
-    </Section>
-  );
+  return <AdminDashboard mode="gatewayMonitoring" />;
 }
 
 function Profile({ user, role }) {
