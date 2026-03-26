@@ -20,7 +20,7 @@ function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
 }
 
-function makeAppUser({ id, email, name, role, token = '', source = 'users_table' }) {
+function makeAppUser({ id, email, name, role, token = '', source = 'users_table', preferredCity = '', preferredMobilityType = '' }) {
   return {
     id: String(id),
     email,
@@ -28,6 +28,8 @@ function makeAppUser({ id, email, name, role, token = '', source = 'users_table'
     role: normalizeRole(role),
     token,
     source,
+    preferredCity: preferredCity || '',
+    preferredMobilityType: preferredMobilityType || '',
   };
 }
 
@@ -167,6 +169,8 @@ export function AuthProvider({ children }) {
       role: row.role,
       token: 'users-table-session',
       source: 'users_table',
+      preferredCity: row.preferred_city || '',
+      preferredMobilityType: row.preferred_mobility_type || '',
     });
 
     setLocalUser(appUser);
@@ -216,6 +220,29 @@ export function AuthProvider({ children }) {
     return;
   }, []);
 
+  const updatePreferences = useCallback(async (preferences) => {
+    if (!user) return;
+    const updated = {
+      ...user,
+      preferredCity: preferences.preferredCity ?? user.preferredCity ?? '',
+      preferredMobilityType: preferences.preferredMobilityType ?? user.preferredMobilityType ?? '',
+    };
+    setLocalUser(updated);
+
+    // Best-effort sync to Supabase (columns may not exist yet — preferences still persist locally)
+    try {
+      await supabase
+        .from('users')
+        .update({
+          preferred_city: updated.preferredCity,
+          preferred_mobility_type: updated.preferredMobilityType,
+        })
+        .eq('id', Number(user.id));
+    } catch {
+      // Non-blocking
+    }
+  }, [user, setLocalUser]);
+
   const value = useMemo(() => ({
     user,
     authLoading,
@@ -223,11 +250,12 @@ export function AuthProvider({ children }) {
     register,
     logout,
     resetPassword,
+    updatePreferences,
     isAuthenticated: Boolean(user),
     isCitizen: user?.role === ROLES.CITIZEN,
     isProvider: user?.role === ROLES.MOBILITY_PROVIDER,
     isAdmin: user?.role === ROLES.ADMIN,
-  }), [user, authLoading, login, register, logout, resetPassword]);
+  }), [user, authLoading, login, register, logout, resetPassword, updatePreferences]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
