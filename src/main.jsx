@@ -1,6 +1,5 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import 'leaflet/dist/leaflet.css';
 import App from './layers/presentation/ui/App';
 import './layers/presentation/ui/styles.css';
 
