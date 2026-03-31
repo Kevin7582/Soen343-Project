@@ -14,65 +14,6 @@ function defaultRateByType(type) {
   return type === 'bike' ? 0.15 : 0.25;
 }
 
-const TRANSIT_COORDINATE_PRESETS = {
-  'green line|berri-uqam|lionel-groulx': {
-    fromCoords: [45.5152, -73.5610],
-    toCoords: [45.4895, -73.5820],
-    path: [
-      [45.5152, -73.5610],
-      [45.5075, -73.5720],
-      [45.4998, -73.5768],
-      [45.4895, -73.5820],
-    ],
-  },
-  'orange line|mont-royal|cote-vertu': {
-    fromCoords: [45.5246, -73.5958],
-    toCoords: [45.5140, -73.6818],
-    path: [
-      [45.5246, -73.5958],
-      [45.5229, -73.6125],
-      [45.5210, -73.6395],
-      [45.5140, -73.6818],
-    ],
-  },
-};
-
-function toCoordPair(input) {
-  if (!input) return null;
-
-  if (Array.isArray(input) && input.length >= 2) {
-    const lat = Number(input[0]);
-    const lng = Number(input[1]);
-    if (Number.isFinite(lat) && Number.isFinite(lng)) return [lat, lng];
-  }
-
-  if (typeof input === 'object' && input !== null) {
-    const lat = Number(input.lat ?? input.latitude);
-    const lng = Number(input.lng ?? input.lon ?? input.longitude);
-    if (Number.isFinite(lat) && Number.isFinite(lng)) return [lat, lng];
-  }
-
-  if (typeof input === 'string') {
-    const parts = input.split(',').map((part) => Number(part.trim()));
-    if (parts.length >= 2 && Number.isFinite(parts[0]) && Number.isFinite(parts[1])) {
-      return [parts[0], parts[1]];
-    }
-  }
-
-  return null;
-}
-
-function normalizePath(path) {
-  if (!Array.isArray(path)) return null;
-  const points = path.map(toCoordPair).filter(Boolean);
-  return points.length >= 2 ? points : null;
-}
-
-function getTransitPreset(line, from, to) {
-  const key = `${String(line || '').trim().toLowerCase()}|${String(from || '').trim().toLowerCase()}|${String(to || '').trim().toLowerCase()}`;
-  return TRANSIT_COORDINATE_PRESETS[key] || null;
-}
-
 function mapVehicle(item) {
   const id = String(item.id ?? item.vehicle_id ?? crypto.randomUUID());
   const type = item.type ?? item.vehicle_type ?? 'scooter';
@@ -174,33 +115,12 @@ export async function fetchTransitRoutes() {
 
   if (!data?.length) return mockTransitRoutes;
   return data.map((item) => ({
-    ...(() => {
-      const line = item.line ?? item.name ?? 'Transit line';
-      const from = item.from ?? item.origin ?? 'Unknown';
-      const to = item.to ?? item.destination ?? 'Unknown';
-      const preset = getTransitPreset(line, from, to);
-      const fromCoords =
-        toCoordPair(item.from_coords ?? item.fromCoords ?? [item.from_lat, item.from_lng]) ??
-        preset?.fromCoords ??
-        null;
-      const toCoords =
-        toCoordPair(item.to_coords ?? item.toCoords ?? [item.to_lat, item.to_lng]) ??
-        preset?.toCoords ??
-        null;
-      const path = normalizePath(item.path ?? item.route_path ?? item.polyline) ?? preset?.path ?? null;
-
-      return {
-        id: String(item.id ?? crypto.randomUUID()),
-        line,
-        from,
-        to,
-        delay: Number(item.delay ?? 0),
-        nextDeparture: item.next_departure ?? item.nextDeparture ?? 'N/A',
-        fromCoords,
-        toCoords,
-        path,
-      };
-    })(),
+    id: String(item.id ?? crypto.randomUUID()),
+    line: item.line ?? item.name ?? 'Transit line',
+    from: item.from ?? item.origin ?? 'Unknown',
+    to: item.to ?? item.destination ?? 'Unknown',
+    delay: Number(item.delay ?? 0),
+    nextDeparture: item.next_departure ?? item.nextDeparture ?? 'N/A',
   }));
 }
 

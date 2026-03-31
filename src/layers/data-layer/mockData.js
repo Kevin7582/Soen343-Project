@@ -6,38 +6,8 @@ export const mockVehicles = [
 ];
 
 export const mockTransitRoutes = [
-  {
-    id: 'r1',
-    line: 'Green Line',
-    from: 'Berri-UQAM',
-    to: 'Lionel-Groulx',
-    delay: 0,
-    nextDeparture: '5 min',
-    fromCoords: [45.5152, -73.5610],
-    toCoords: [45.4895, -73.5820],
-    path: [
-      [45.5152, -73.5610],
-      [45.5075, -73.5720],
-      [45.4998, -73.5768],
-      [45.4895, -73.5820],
-    ],
-  },
-  {
-    id: 'r2',
-    line: 'Orange Line',
-    from: 'Mont-Royal',
-    to: 'Cote-Vertu',
-    delay: 2,
-    nextDeparture: '3 min',
-    fromCoords: [45.5246, -73.5958],
-    toCoords: [45.5140, -73.6818],
-    path: [
-      [45.5246, -73.5958],
-      [45.5229, -73.6125],
-      [45.5210, -73.6395],
-      [45.5140, -73.6818],
-    ],
-  },
+  { id: 'r1', line: 'Green Line', from: 'Berri-UQAM', to: 'Lionel-Groulx', delay: 0, nextDeparture: '5 min' },
+  { id: 'r2', line: 'Orange Line', from: 'Mont-Royal', to: 'Cote-Vertu', delay: 2, nextDeparture: '3 min' },
 ];
 
 export const mockParkingSpots = [
