@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AuthProvider, ROLES, useAuth } from '../context/AuthContext';
 import { RentalProvider, useRental } from '../context/RentalContext';
 import AdminDashboard from "./AdminDashboard";
+import TransitMap from './TransitMap';
 import RecommendationService from '../../service-layer/recommendationService';
 import { createRoleDashboardCreator } from './roleDashboardFactory';
 import { supabase } from '../../data-layer/supabaseClient';
@@ -192,6 +193,7 @@ function Dashboard() {
   const [transitPlans, setTransitPlans] = useState([]);
   const [transitFrom, setTransitFrom] = useState('Downtown');
   const [transitTo, setTransitTo] = useState('Campus');
+  const [selectedTransitRouteId, setSelectedTransitRouteId] = useState('');
   const [mobilityError, setMobilityError] = useState('');
 
   const { loadingData, vehiclesData, transitRoutes, parkingSpots, providerRentals, refreshDashboardData } = useDashboardData();
@@ -207,6 +209,17 @@ function Dashboard() {
       setTab('home');
     }
   }, [tab, tabs]);
+
+  useEffect(() => {
+    if (!transitRoutes.length) {
+      setSelectedTransitRouteId('');
+      return;
+    }
+    const currentStillExists = transitRoutes.some((route) => String(route.id) === String(selectedTransitRouteId));
+    if (!currentStillExists) {
+      setSelectedTransitRouteId(String(transitRoutes[0].id));
+    }
+  }, [transitRoutes, selectedTransitRouteId]);
 
   useEffect(() => {
     let mounted = true;
@@ -247,6 +260,11 @@ function Dashboard() {
     const maxRadius = parseFloat(radius) || 2;
     return list.filter((vehicle) => vehicle.distance <= maxRadius);
   }, [vehiclesData, vehicleType, radius]);
+
+  const selectedTransitRoute = useMemo(
+    () => transitRoutes.find((route) => String(route.id) === String(selectedTransitRouteId)) || null,
+    [transitRoutes, selectedTransitRouteId]
+  );
 
   const handleReserveVehicle = async (vehicle) => {
     if (reservation || activeRental) {
@@ -408,6 +426,8 @@ function Dashboard() {
         transitTo={transitTo}
         setTransitFrom={setTransitFrom}
         setTransitTo={setTransitTo}
+        selectedTransitRoute={selectedTransitRoute}
+        onSelectTransitRoute={setSelectedTransitRouteId}
         onPlanTransit={handlePlanTransit}
         parkingReservation={parkingReservation}
         parkingDuration={parkingDuration}
@@ -496,6 +516,8 @@ function CitizenViews({
   transitTo,
   setTransitFrom,
   setTransitTo,
+  selectedTransitRoute,
+  onSelectTransitRoute,
   onPlanTransit,
   parkingReservation,
   parkingDuration,
@@ -564,19 +586,81 @@ function CitizenViews({
       )}
 
       {tab === 'transit' && (
-        <Section title="Public transit" subtitle="Routes and schedules">
+        <Section title="Public transit" subtitle="Interactive routes and trip planning">
           <div className="panel stack-12">
-            <h3>External transit service</h3>
-            <p>Need full transit information? Click below to open STM.</p>
-            <a
-              className="btn btn-primary"
-              href="https://www.stm.info/en"
-              target="_blank"
-              rel="noreferrer"
-              style={{ width: 'fit-content', textDecoration: 'none' }}
-            >
-              Open STM Transit
-            </a>
+            <h3>Plan your trip</h3>
+            <div className="row wrap gap-8">
+              <label style={{ flex: 1, minWidth: 180 }}>
+                From
+                <input value={transitFrom} onChange={(e) => setTransitFrom(e.target.value)} placeholder="e.g. Downtown" />
+              </label>
+              <label style={{ flex: 1, minWidth: 180 }}>
+                To
+                <input value={transitTo} onChange={(e) => setTransitTo(e.target.value)} placeholder="e.g. Campus" />
+              </label>
+            </div>
+            <div className="row wrap gap-8">
+              <button
+                className="btn btn-primary"
+                disabled={!selectedTransitRoute}
+                onClick={() => selectedTransitRoute && onPlanTransit(selectedTransitRoute)}
+              >
+                {selectedTransitRoute ? `Plan ${selectedTransitRoute.line}` : 'Select a route on the map'}
+              </button>
+              <a
+                className="btn btn-soft"
+                href="https://www.stm.info/en"
+                target="_blank"
+                rel="noreferrer"
+                style={{ width: 'fit-content', textDecoration: 'none' }}
+              >
+                Open STM website
+              </a>
+            </div>
+          </div>
+
+          <TransitMap
+            routes={transitRoutes}
+            selectedRouteId={selectedTransitRoute?.id}
+            onSelectRoute={onSelectTransitRoute}
+          />
+
+          <div className="grid-2">
+            {transitRoutes.map((route) => {
+              const selected = String(route.id) === String(selectedTransitRoute?.id);
+              return (
+                <div key={route.id} className="card stack-8" style={selected ? { borderColor: 'var(--primary)' } : undefined}>
+                  <h3>{route.line}</h3>
+                  <p>{route.from} {'->'} {route.to}</p>
+                  <p>Next departure: {route.nextDeparture}</p>
+                  <p>Delay: {route.delay} min</p>
+                  <div className="row gap-8 wrap">
+                    <button className={`btn ${selected ? 'btn-primary-soft' : 'btn-soft'}`} onClick={() => onSelectTransitRoute(route.id)}>
+                      {selected ? 'Selected' : 'Preview on map'}
+                    </button>
+                    <button className="btn btn-primary" onClick={() => onPlanTransit(route)}>
+                      Plan route
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="panel stack-12">
+            <h3>Your latest transit plans</h3>
+            {transitPlans.length === 0 && <p>No transit plans yet. Select a route and click Plan route.</p>}
+            {transitPlans.length > 0 && (
+              <div className="stack-8">
+                {transitPlans.map((plan) => (
+                  <div key={plan.id} className="card">
+                    <p><strong>{plan.from}</strong> {'->'} <strong>{plan.to}</strong></p>
+                    <p>{plan.notes || `Route #${plan.routeId}`}</p>
+                    <p>Planned at: {new Date(plan.plannedAt).toLocaleString()}</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </Section>
       )}
