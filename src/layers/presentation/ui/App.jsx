@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AuthProvider, ROLES, useAuth } from '../context/AuthContext';
 import { RentalProvider, useRental } from '../context/RentalContext';
 import AdminDashboard from "./AdminDashboard";
+import TransitMap from './TransitMap';
 import RecommendationService from '../../service-layer/recommendationService';
 import { createRoleDashboardCreator } from './roleDashboardFactory';
 import { supabase } from '../../data-layer/supabaseClient';
@@ -192,6 +193,11 @@ function Dashboard() {
   const [transitPlans, setTransitPlans] = useState([]);
   const [transitFrom, setTransitFrom] = useState('Downtown');
   const [transitTo, setTransitTo] = useState('Campus');
+  const [selectedTransitRouteId, setSelectedTransitRouteId] = useState('');
+  const [transitStartPoint, setTransitStartPoint] = useState(null);
+  const [transitEndPoint, setTransitEndPoint] = useState(null);
+  const [transitTravelMode, setTransitTravelMode] = useState('TRANSIT');
+  const [transitRouteInfo, setTransitRouteInfo] = useState(null);
   const [mobilityError, setMobilityError] = useState('');
 
   const { loadingData, vehiclesData, transitRoutes, parkingSpots, providerRentals, refreshDashboardData } = useDashboardData();
@@ -207,6 +213,17 @@ function Dashboard() {
       setTab('home');
     }
   }, [tab, tabs]);
+
+  useEffect(() => {
+    if (!transitRoutes.length) {
+      setSelectedTransitRouteId('');
+      return;
+    }
+    const exists = transitRoutes.some((route) => String(route.id) === String(selectedTransitRouteId));
+    if (!exists) {
+      setSelectedTransitRouteId(String(transitRoutes[0].id));
+    }
+  }, [transitRoutes, selectedTransitRouteId]);
 
   useEffect(() => {
     let mounted = true;
@@ -247,6 +264,11 @@ function Dashboard() {
     const maxRadius = parseFloat(radius) || 2;
     return list.filter((vehicle) => vehicle.distance <= maxRadius);
   }, [vehiclesData, vehicleType, radius]);
+
+  const selectedTransitRoute = useMemo(
+    () => transitRoutes.find((route) => String(route.id) === String(selectedTransitRouteId)) || null,
+    [transitRoutes, selectedTransitRouteId]
+  );
 
   const handleReserveVehicle = async (vehicle) => {
     if (reservation || activeRental) {
@@ -367,19 +389,48 @@ function Dashboard() {
     }
   };
 
-  const handlePlanTransit = async (route) => {
+  const handlePlanTransit = async (route, fromOverride, toOverride) => {
     if (!user?.id) return;
-    if (!transitFrom.trim() || !transitTo.trim()) {
+    const fromValue = String(fromOverride ?? transitFrom).trim();
+    const toValue = String(toOverride ?? transitTo).trim();
+    if (!fromValue || !toValue) {
       setMobilityError('Enter both origin and destination to plan a transit trip.');
       return;
     }
     setMobilityError('');
     try {
-      const plan = await planTransitTrip(user.id, route, transitFrom.trim(), transitTo.trim());
+      const plan = await planTransitTrip(user.id, route, fromValue, toValue);
       setTransitPlans((prev) => [plan, ...prev].slice(0, 10));
     } catch (error) {
       setMobilityError(error?.message || 'Unable to plan transit trip.');
     }
+  };
+
+  const handleUseSelectedRouteEndpoints = () => {
+    if (!selectedTransitRoute?.fromCoords || !selectedTransitRoute?.toCoords) return;
+    setTransitStartPoint(selectedTransitRoute.fromCoords);
+    setTransitEndPoint(selectedTransitRoute.toCoords);
+    setTransitFrom(selectedTransitRoute.from || 'Route start');
+    setTransitTo(selectedTransitRoute.to || 'Route end');
+  };
+
+  const handlePlanTransitFromMap = async () => {
+    if (!transitStartPoint || !transitEndPoint) {
+      setMobilityError('Set both start and end points on the map first.');
+      return;
+    }
+
+    const route = selectedTransitRoute || {
+      id: 'custom-map-route',
+      line: `${transitTravelMode} route`,
+      nextDeparture: 'N/A',
+      from: transitFrom,
+      to: transitTo,
+    };
+
+    const fromLabel = `${transitFrom.trim() || 'Map start'} (${transitStartPoint[0]}, ${transitStartPoint[1]})`;
+    const toLabel = `${transitTo.trim() || 'Map end'} (${transitEndPoint[0]}, ${transitEndPoint[1]})`;
+    await handlePlanTransit(route, fromLabel, toLabel);
   };
 
   const roleMainContent = roleDashboardCreator.createMainContent({
@@ -408,6 +459,18 @@ function Dashboard() {
         transitTo={transitTo}
         setTransitFrom={setTransitFrom}
         setTransitTo={setTransitTo}
+        selectedTransitRoute={selectedTransitRoute}
+        onSelectTransitRoute={setSelectedTransitRouteId}
+        transitStartPoint={transitStartPoint}
+        transitEndPoint={transitEndPoint}
+        onSetTransitStartPoint={setTransitStartPoint}
+        onSetTransitEndPoint={setTransitEndPoint}
+        transitTravelMode={transitTravelMode}
+        onSetTransitTravelMode={setTransitTravelMode}
+        transitRouteInfo={transitRouteInfo}
+        onTransitRouteInfoChange={setTransitRouteInfo}
+        onUseSelectedRouteEndpoints={handleUseSelectedRouteEndpoints}
+        onPlanTransitFromMap={handlePlanTransitFromMap}
         onPlanTransit={handlePlanTransit}
         parkingReservation={parkingReservation}
         parkingDuration={parkingDuration}
@@ -496,6 +559,18 @@ function CitizenViews({
   transitTo,
   setTransitFrom,
   setTransitTo,
+  selectedTransitRoute,
+  onSelectTransitRoute,
+  transitStartPoint,
+  transitEndPoint,
+  onSetTransitStartPoint,
+  onSetTransitEndPoint,
+  transitTravelMode,
+  onSetTransitTravelMode,
+  transitRouteInfo,
+  onTransitRouteInfoChange,
+  onUseSelectedRouteEndpoints,
+  onPlanTransitFromMap,
   onPlanTransit,
   parkingReservation,
   parkingDuration,
@@ -564,19 +639,110 @@ function CitizenViews({
       )}
 
       {tab === 'transit' && (
-        <Section title="Public transit" subtitle="Routes and schedules">
+        <Section title="Public transit" subtitle="Google Maps routing, route overlays, and trip planning">
           <div className="panel stack-12">
-            <h3>External transit service</h3>
-            <p>Need full transit information? Click below to open STM.</p>
-            <a
-              className="btn btn-primary"
-              href="https://www.stm.info/en"
-              target="_blank"
-              rel="noreferrer"
-              style={{ width: 'fit-content', textDecoration: 'none' }}
-            >
-              Open STM Transit
-            </a>
+            <h3>Plan your trip</h3>
+            <div className="row wrap gap-8">
+              <label style={{ flex: 1, minWidth: 220 }}>
+                From
+                <input value={transitFrom} onChange={(e) => setTransitFrom(e.target.value)} placeholder="Type an address or place" />
+              </label>
+              <label style={{ flex: 1, minWidth: 220 }}>
+                To
+                <input value={transitTo} onChange={(e) => setTransitTo(e.target.value)} placeholder="Type an address or place" />
+              </label>
+              <label style={{ minWidth: 180 }}>
+                Travel mode
+                <select value={transitTravelMode} onChange={(e) => onSetTransitTravelMode(e.target.value)}>
+                  <option value="TRANSIT">Transit</option>
+                  <option value="DRIVING">Driving</option>
+                  <option value="WALKING">Walking</option>
+                  <option value="BICYCLING">Bicycling</option>
+                </select>
+              </label>
+            </div>
+            <div className="row wrap gap-8">
+              <button
+                className="btn btn-primary"
+                disabled={!selectedTransitRoute}
+                onClick={() => selectedTransitRoute && onPlanTransit(selectedTransitRoute)}
+              >
+                {selectedTransitRoute ? `Plan ${selectedTransitRoute.line}` : 'Select a route on the map'}
+              </button>
+              <button
+                className="btn btn-soft"
+                disabled={!selectedTransitRoute}
+                onClick={onUseSelectedRouteEndpoints}
+              >
+                Use selected route endpoints
+              </button>
+              <button
+                className="btn btn-primary-soft"
+                disabled={!transitStartPoint || !transitEndPoint}
+                onClick={onPlanTransitFromMap}
+              >
+                Save map route plan
+              </button>
+            </div>
+            {transitRouteInfo && (
+              <p>
+                Google route preview: {transitRouteInfo.distanceText || 'N/A'} in {transitRouteInfo.durationText || 'N/A'} ({transitTravelMode.toLowerCase()}).
+              </p>
+            )}
+          </div>
+
+          <TransitMap
+            routes={transitRoutes}
+            selectedRouteId={selectedTransitRoute?.id}
+            onSelectRoute={onSelectTransitRoute}
+            startPoint={transitStartPoint}
+            endPoint={transitEndPoint}
+            onSetStartPoint={onSetTransitStartPoint}
+            onSetEndPoint={onSetTransitEndPoint}
+            transitFrom={transitFrom}
+            transitTo={transitTo}
+            onSetTransitFrom={setTransitFrom}
+            onSetTransitTo={setTransitTo}
+            travelMode={transitTravelMode}
+            onRouteInfoChange={onTransitRouteInfoChange}
+          />
+
+          <div className="grid-2">
+            {transitRoutes.map((route) => {
+              const selected = String(route.id) === String(selectedTransitRoute?.id);
+              return (
+                <div key={route.id} className="card stack-8" style={selected ? { borderColor: 'var(--primary)' } : undefined}>
+                  <h3>{route.line}</h3>
+                  <p>{route.from} {'->'} {route.to}</p>
+                  <p>Next departure: {route.nextDeparture}</p>
+                  <p>Delay: {route.delay} min</p>
+                  <div className="row gap-8 wrap">
+                    <button className={`btn ${selected ? 'btn-primary-soft' : 'btn-soft'}`} onClick={() => onSelectTransitRoute(route.id)}>
+                      {selected ? 'Selected' : 'Preview on map'}
+                    </button>
+                    <button className="btn btn-primary" onClick={() => onPlanTransit(route)}>
+                      Save route plan
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="panel stack-12">
+            <h3>Your latest transit plans</h3>
+            {transitPlans.length === 0 && <p>No transit plans yet. Use the map and save a route.</p>}
+            {transitPlans.length > 0 && (
+              <div className="stack-8">
+                {transitPlans.map((plan) => (
+                  <div key={plan.id} className="card">
+                    <p><strong>{plan.from}</strong> {'->'} <strong>{plan.to}</strong></p>
+                    <p>{plan.notes || `Route #${plan.routeId}`}</p>
+                    <p>Planned at: {new Date(plan.plannedAt).toLocaleString()}</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </Section>
       )}
