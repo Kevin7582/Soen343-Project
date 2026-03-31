@@ -6,6 +6,7 @@ const DEFAULT_MAP_OPTIONS = {
   mapTypeControl: false,
   fullscreenControl: false,
 };
+const DEFAULT_LIBRARIES = ['places'];
 
 export default function MapShell({
   center,
@@ -16,11 +17,13 @@ export default function MapShell({
   children,
   mapContainerStyle,
   options,
+  libraries = DEFAULT_LIBRARIES,
 }) {
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
   const { isLoaded, loadError } = useJsApiLoader({
     id: 'summs-google-map-script',
     googleMapsApiKey: apiKey,
+    libraries: libraries?.length ? libraries : DEFAULT_LIBRARIES,
   });
 
   if (!apiKey) {
