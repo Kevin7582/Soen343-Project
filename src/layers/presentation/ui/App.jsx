@@ -194,8 +194,6 @@ function Dashboard() {
   const [transitFrom, setTransitFrom] = useState('Downtown');
   const [transitTo, setTransitTo] = useState('Campus');
   const [selectedTransitRouteId, setSelectedTransitRouteId] = useState('');
-  const [transitStartPoint, setTransitStartPoint] = useState(null);
-  const [transitEndPoint, setTransitEndPoint] = useState(null);
   const [mobilityError, setMobilityError] = useState('');
 
   const { loadingData, vehiclesData, transitRoutes, parkingSpots, providerRentals, refreshDashboardData } = useDashboardData();
@@ -387,44 +385,19 @@ function Dashboard() {
     }
   };
 
-  const handlePlanTransit = async (route, fromOverride, toOverride) => {
+  const handlePlanTransit = async (route) => {
     if (!user?.id) return;
-    const fromValue = String(fromOverride ?? transitFrom).trim();
-    const toValue = String(toOverride ?? transitTo).trim();
-    if (!fromValue || !toValue) {
+    if (!transitFrom.trim() || !transitTo.trim()) {
       setMobilityError('Enter both origin and destination to plan a transit trip.');
       return;
     }
     setMobilityError('');
     try {
-      const plan = await planTransitTrip(user.id, route, fromValue, toValue);
+      const plan = await planTransitTrip(user.id, route, transitFrom.trim(), transitTo.trim());
       setTransitPlans((prev) => [plan, ...prev].slice(0, 10));
     } catch (error) {
       setMobilityError(error?.message || 'Unable to plan transit trip.');
     }
-  };
-
-  const handleUseSelectedRouteEndpoints = () => {
-    if (!selectedTransitRoute?.fromCoords || !selectedTransitRoute?.toCoords) return;
-    setTransitStartPoint(selectedTransitRoute.fromCoords);
-    setTransitEndPoint(selectedTransitRoute.toCoords);
-    setTransitFrom(selectedTransitRoute.from || 'Route start');
-    setTransitTo(selectedTransitRoute.to || 'Route end');
-  };
-
-  const handlePlanTransitFromMap = async () => {
-    if (!selectedTransitRoute) {
-      setMobilityError('Select a transit route first.');
-      return;
-    }
-    if (!transitStartPoint || !transitEndPoint) {
-      setMobilityError('Set both start and end points on the map first.');
-      return;
-    }
-
-    const fromLabel = `${transitFrom.trim() || 'Map start'} (${transitStartPoint[0]}, ${transitStartPoint[1]})`;
-    const toLabel = `${transitTo.trim() || 'Map end'} (${transitEndPoint[0]}, ${transitEndPoint[1]})`;
-    await handlePlanTransit(selectedTransitRoute, fromLabel, toLabel);
   };
 
   const roleMainContent = roleDashboardCreator.createMainContent({
@@ -455,12 +428,6 @@ function Dashboard() {
         setTransitTo={setTransitTo}
         selectedTransitRoute={selectedTransitRoute}
         onSelectTransitRoute={setSelectedTransitRouteId}
-        transitStartPoint={transitStartPoint}
-        transitEndPoint={transitEndPoint}
-        onSetTransitStartPoint={setTransitStartPoint}
-        onSetTransitEndPoint={setTransitEndPoint}
-        onUseSelectedRouteEndpoints={handleUseSelectedRouteEndpoints}
-        onPlanTransitFromMap={handlePlanTransitFromMap}
         onPlanTransit={handlePlanTransit}
         parkingReservation={parkingReservation}
         parkingDuration={parkingDuration}
@@ -551,12 +518,6 @@ function CitizenViews({
   setTransitTo,
   selectedTransitRoute,
   onSelectTransitRoute,
-  transitStartPoint,
-  transitEndPoint,
-  onSetTransitStartPoint,
-  onSetTransitEndPoint,
-  onUseSelectedRouteEndpoints,
-  onPlanTransitFromMap,
   onPlanTransit,
   parkingReservation,
   parkingDuration,
@@ -646,20 +607,6 @@ function CitizenViews({
               >
                 {selectedTransitRoute ? `Plan ${selectedTransitRoute.line}` : 'Select a route on the map'}
               </button>
-              <button
-                className="btn btn-soft"
-                disabled={!selectedTransitRoute}
-                onClick={onUseSelectedRouteEndpoints}
-              >
-                Use selected route endpoints
-              </button>
-              <button
-                className="btn btn-primary-soft"
-                disabled={!selectedTransitRoute || !transitStartPoint || !transitEndPoint}
-                onClick={onPlanTransitFromMap}
-              >
-                Plan with map points
-              </button>
               <a
                 className="btn btn-soft"
                 href="https://www.stm.info/en"
@@ -676,10 +623,6 @@ function CitizenViews({
             routes={transitRoutes}
             selectedRouteId={selectedTransitRoute?.id}
             onSelectRoute={onSelectTransitRoute}
-            startPoint={transitStartPoint}
-            endPoint={transitEndPoint}
-            onSetStartPoint={onSetTransitStartPoint}
-            onSetEndPoint={onSetTransitEndPoint}
           />
 
           <div className="grid-2">
