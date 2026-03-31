@@ -69,6 +69,16 @@ input {
   margin-top: 6px;
 }
 
+select {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  padding: 12px;
+  background: #0b1220;
+  color: var(--text);
+  margin-top: 6px;
+}
+
 label {
   color: var(--text-muted);
   font-size: 0.9rem;
