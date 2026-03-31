@@ -35,6 +35,7 @@ Follow these exact steps for the Transit map to work:
 3. Enable these APIs:
    - Maps JavaScript API
    - Directions API
+   - Places API
 4. Create an API key.
 5. Restrict the key:
    - Application restrictions:
@@ -42,6 +43,7 @@ Follow these exact steps for the Transit map to work:
    - API restrictions:
      - Maps JavaScript API
      - Directions API
+     - Places API
 6. Put the key in `.env`:
 
 ```bash
