@@ -160,6 +160,20 @@ label {
   height: 420px;
 }
 
+.transit-map-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.transit-map-toolbar p {
+  color: var(--text-muted);
+}
+
 .panel.success {
   border-color: var(--success);
 }
