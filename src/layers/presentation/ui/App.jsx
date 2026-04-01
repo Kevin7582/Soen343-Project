@@ -909,9 +909,12 @@ function ProviderVehicles({ initialVehicles = [] }) {
   const type = window.prompt('Vehicle type (bike or scooter):', 'scooter');
   if (!type) return;
   
+  const location = window.prompt('Vehicle location:', 'Montreal Downtown');
+  if (!location) return;
+
   const newVehicle = {
     type: type.toLowerCase(),
-    location: 'Montreal',
+    location: location,
     available: true,
     provider_id: 1,
   };

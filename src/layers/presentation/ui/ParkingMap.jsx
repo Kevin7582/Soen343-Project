@@ -1,83 +1,97 @@
 // presentation/ui/ParkingMap.jsx
 // Displays parking spots as markers on Google Maps.
-// Uses MapShell (shared map foundation) as the base.
+// Uses Google Geocoding API to convert address text to coordinates.
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MarkerF, InfoWindowF } from '@react-google-maps/api';
 import MapShell from './maps/MapShell';
 
 const MONTREAL_CENTER = { lat: 45.5017, lng: -73.5673 };
+const MAP_CONTAINER_STYLE = { width: '100%', height: '420px' };
+const geocodeCache = {};
 
-const MAP_CONTAINER_STYLE = {
-  width: '100%',
-  height: '420px',
-};
-
-// Hardcoded coordinates for known parking locations
-const PARKING_COORDS = {
-  'old port lot d':   { lat: 45.5075, lng: -73.5538 },
-  'campus garage b':  { lat: 45.4972, lng: -73.5788 },
-  'metro lot c':      { lat: 45.5131, lng: -73.5670 },
-  'downtown lot a':   { lat: 45.5048, lng: -73.5732 },
-};
-
-function getCoords(address) {
+async function geocodeAddress(address) {
   if (!address) return null;
   const key = address.toLowerCase().trim();
-  return PARKING_COORDS[key] || null;
+  if (geocodeCache[key]) return geocodeCache[key];
+
+  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+  const query = `${address}, Montreal, Quebec, Canada`;
+  const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&key=${apiKey}`;
+
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.status === 'OK' && data.results.length > 0) {
+      const { lat, lng } = data.results[0].geometry.location;
+      const coords = { lat, lng };
+      geocodeCache[key] = coords;
+      return coords;
+    }
+  } catch (err) {
+    console.warn('Geocoding failed for:', address, err);
+  }
+  return null;
 }
 
 export default function ParkingMap({ spots = [], onReserve, parkingReservation }) {
+  const [spotsWithCoords, setSpotsWithCoords] = useState([]);
   const [selectedSpot, setSelectedSpot] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  const spotsWithCoords = spots
-    .map((s) => ({ ...s, coords: getCoords(s.address) }))
-    .filter((s) => s.coords !== null);
+  useEffect(() => {
+    let mounted = true;
+    async function loadCoords() {
+      setLoading(true);
+      const results = await Promise.all(
+        spots.map(async (s) => {
+          const coords = await geocodeAddress(s.address);
+          return coords ? { ...s, coords } : null;
+        })
+      );
+      if (mounted) {
+        setSpotsWithCoords(results.filter(Boolean));
+        setLoading(false);
+      }
+    }
+    if (spots.length > 0) {
+      loadCoords();
+    } else {
+      setLoading(false);
+    }
+    return () => { mounted = false; };
+  }, [spots]);
 
   return (
     <div style={{ display: 'grid', gap: '1rem' }}>
-      <MapShell
-        mapContainerStyle={MAP_CONTAINER_STYLE}
-        center={MONTREAL_CENTER}
-        zoom={13}
-      >
+      {loading && <div className="panel" style={{ color: 'var(--text-muted)' }}>Loading parking locations...</div>}
+
+      <MapShell mapContainerStyle={MAP_CONTAINER_STYLE} center={MONTREAL_CENTER} zoom={13}>
         {spotsWithCoords.map((spot) => (
           <MarkerF
             key={spot.id}
             position={spot.coords}
             onClick={() => setSelectedSpot(spot)}
             title={spot.address}
-            label={{
-              text: spot.available > 0 ? '🅿️' : '🚫',
-              fontSize: '20px',
-            }}
+            label={{ text: spot.available > 0 ? '🅿️' : '🚫', fontSize: '20px' }}
           />
         ))}
 
-        {selectedSpot && selectedSpot.coords && (
-          <InfoWindowF
-            position={selectedSpot.coords}
-            onCloseClick={() => setSelectedSpot(null)}
-          >
+        {selectedSpot?.coords && (
+          <InfoWindowF position={selectedSpot.coords} onCloseClick={() => setSelectedSpot(null)}>
             <div style={{ padding: '0.5rem', minWidth: '180px', color: '#111' }}>
-              <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>
-                🅿️ {selectedSpot.address}
-              </h3>
+              <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>🅿️ {selectedSpot.address}</h3>
               <p style={{ margin: '0 0 0.25rem', fontSize: '0.875rem' }}>
                 Available: {selectedSpot.available}/{selectedSpot.total} spots
               </p>
               <p style={{ margin: '0 0 0.75rem', fontSize: '0.875rem' }}>
                 Price: ${selectedSpot.pricePerHour ?? 2.5}/h
               </p>
-
               {selectedSpot.available > 0 && !parkingReservation ? (
                 <button
                   className="btn btn-primary"
                   style={{ width: '100%' }}
-                  onClick={() => {
-                    onReserve?.(selectedSpot);
-                    setSelectedSpot(null);
-                  }}
+                  onClick={() => { onReserve?.(selectedSpot); setSelectedSpot(null); }}
                 >
                   Reserve spot
                 </button>
@@ -92,7 +106,7 @@ export default function ParkingMap({ spots = [], onReserve, parkingReservation }
       </MapShell>
 
       <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: 0 }}>
-        🅿️ Green = available spots. Click a marker to reserve.
+        🅿️ Click a parking marker to reserve a spot.
       </p>
     </div>
   );
