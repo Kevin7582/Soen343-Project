@@ -236,6 +236,321 @@ label {
   font-size: 0.92rem;
 }
 
+.transit-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.transit-stage {
+  min-width: 0;
+}
+
+.transit-map-shell {
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: #0b1220;
+}
+
+.transit-overlay {
+  position: absolute;
+  z-index: 20;
+}
+
+.transit-overlay-top {
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 150px 90px 150px;
+  gap: 10px;
+}
+
+.transit-search-input {
+  margin: 0;
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  background: rgba(15, 23, 42, 0.92);
+  backdrop-filter: blur(6px);
+}
+
+.transit-mode-select {
+  margin: 0;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  background: rgba(15, 23, 42, 0.92);
+  color: var(--text);
+  padding: 12px;
+}
+
+.transit-swap-btn {
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.92);
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.transit-overlay-right {
+  top: 84px;
+  right: 14px;
+  width: 184px;
+  display: grid;
+  gap: 8px;
+}
+
+.transit-overlay-maptools {
+  top: 84px;
+  left: 14px;
+  display: flex;
+  gap: 8px;
+}
+
+.transit-maptool-btn {
+  border: 1px solid rgba(100, 116, 139, 0.8);
+  background: rgba(15, 23, 42, 0.9);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.transit-maptool-btn.is-active {
+  border-color: var(--primary);
+  color: #bae6fd;
+  background: rgba(56, 189, 248, 0.16);
+}
+
+.transit-action-btn {
+  border: 1px solid rgba(100, 116, 139, 0.8);
+  background: rgba(15, 23, 42, 0.9);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 0.86rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+
+.transit-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.transit-action-btn.is-active {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.transit-action-btn.is-primary {
+  border-color: rgba(56, 189, 248, 0.85);
+  background: rgba(56, 189, 248, 0.15);
+}
+
+.transit-overlay-info {
+  left: 14px;
+  bottom: 66px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(56, 189, 248, 0.7);
+  background: rgba(15, 23, 42, 0.92);
+  color: #bae6fd;
+  font-size: 0.84rem;
+  backdrop-filter: blur(6px);
+}
+
+.transit-overlay-info p {
+  margin: 0;
+}
+
+.transit-overlay-status {
+  left: 14px;
+  bottom: 66px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.7);
+  background: rgba(15, 23, 42, 0.92);
+  color: var(--text);
+  font-size: 0.84rem;
+  backdrop-filter: blur(6px);
+}
+
+.transit-overlay-status.is-error {
+  border-color: rgba(248, 113, 113, 0.8);
+  color: #fecaca;
+}
+
+.transit-overlay-bottom {
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.transit-overlay-left {
+  top: 130px;
+  left: 14px;
+  width: 340px;
+  max-height: calc(72vh - 150px);
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+}
+
+.transit-directions-card {
+  border: 1px solid rgba(71, 85, 105, 0.85);
+  background: rgba(15, 23, 42, 0.92);
+  border-radius: 12px;
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.transit-directions-card h3,
+.transit-directions-card h4 {
+  margin: 0;
+  color: var(--primary);
+  font-size: 0.92rem;
+}
+
+.transit-directions-card p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.transit-alt-routes {
+  display: grid;
+  gap: 6px;
+}
+
+.transit-alt-route-btn {
+  border: 1px solid rgba(100, 116, 139, 0.8);
+  border-radius: 10px;
+  background: rgba(30, 41, 59, 0.8);
+  color: var(--text);
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.transit-alt-route-btn.is-selected {
+  border-color: var(--primary);
+  color: #bae6fd;
+}
+
+.transit-steps-list {
+  display: grid;
+  gap: 6px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.transit-step-row {
+  border: 1px solid rgba(71, 85, 105, 0.6);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.6);
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.transit-route-chip {
+  border: 1px solid rgba(100, 116, 139, 0.85);
+  background: rgba(15, 23, 42, 0.9);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 8px 14px;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+
+.transit-route-chip.is-selected {
+  border-color: var(--primary);
+  background: rgba(56, 189, 248, 0.16);
+  color: #bae6fd;
+}
+
+.transit-overlay-warning {
+  top: 68px;
+  left: 14px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(251, 191, 36, 0.9);
+  background: rgba(15, 23, 42, 0.9);
+  color: #fde68a;
+  font-size: 0.8rem;
+}
+
+.transit-sidepanel {
+  background: linear-gradient(160deg, rgba(30, 41, 59, 0.96), rgba(15, 23, 42, 0.96));
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  max-height: 72vh;
+  overflow: auto;
+}
+
+.transit-sidepanel-section {
+  border: 1px solid rgba(71, 85, 105, 0.8);
+  border-radius: 12px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.transit-sidepanel-section h3 {
+  font-size: 0.95rem;
+  color: var(--primary);
+}
+
+.transit-sidepanel-section p {
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
+.transit-route-line {
+  color: var(--text) !important;
+  font-size: 1.05rem !important;
+  font-weight: 700;
+}
+
+.transit-plans-list {
+  display: grid;
+  gap: 8px;
+}
+
+.transit-plan-row {
+  border: 1px solid rgba(71, 85, 105, 0.72);
+  border-radius: 10px;
+  padding: 10px;
+  display: grid;
+  gap: 4px;
+  background: rgba(2, 6, 23, 0.55);
+}
+
+.transit-plan-row p {
+  margin: 0;
+}
+
 @media (max-width: 900px) {
   .dashboard {
     grid-template-columns: 1fr;
@@ -248,5 +563,56 @@ label {
 
   .grid-2 {
     grid-template-columns: 1fr;
+  }
+
+  .transit-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .transit-overlay-top {
+    grid-template-columns: 1fr;
+    right: 54px;
+  }
+
+  .transit-overlay-left {
+    top: 220px;
+    width: calc(100% - 68px);
+    max-height: 38vh;
+  }
+
+  .transit-overlay-maptools {
+    top: 176px;
+    right: 54px;
+    left: auto;
+  }
+
+  .transit-overlay-right {
+    top: 220px;
+    right: 10px;
+    width: 42px;
+  }
+
+  .transit-action-btn {
+    width: 42px;
+    height: 42px;
+    padding: 0;
+    border-radius: 50%;
+    text-indent: -9999px;
+    position: relative;
+  }
+
+  .transit-action-btn::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    background: currentColor;
+  }
+
+  .transit-sidepanel {
+    max-height: none;
   }
 }

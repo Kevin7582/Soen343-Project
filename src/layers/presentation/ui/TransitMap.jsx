@@ -1,31 +1,12 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Autocomplete, DirectionsRenderer, MarkerF, PolylineF } from '@react-google-maps/api';
-import { fetchDirectionsPath } from '../../service-layer/maps/mapRoutingService';
+import React, { useEffect, useMemo, useState } from 'react';
 import MapShell from './maps/MapShell';
 import { toLatLngLiteral, toPath, toPointArray } from './maps/mapUtils';
-
-const MONTREAL_CENTER = { lat: 45.5017, lng: -73.5673 };
-const MAP_CONTAINER_STYLE = {
-  width: '100%',
-  height: '420px',
-};
-
-function routeColor(isSelected) {
-  return isSelected ? '#38bdf8' : '#64748b';
-}
-
-function toTravelMode(mode) {
-  if (!window.google?.maps?.TravelMode) return null;
-  return window.google.maps.TravelMode[mode] || window.google.maps.TravelMode.TRANSIT;
-}
-
-function parseDurationAndDistance(directionsResult) {
-  const leg = directionsResult?.routes?.[0]?.legs?.[0];
-  return {
-    distanceText: leg?.distance?.text || '',
-    durationText: leg?.duration?.text || '',
-  };
-}
+import TransitSearchOverlay from './transit/TransitSearchOverlay';
+import TransitControlsOverlay from './transit/TransitControlsOverlay';
+import TransitMapLayers from './transit/TransitMapLayers';
+import TransitDirectionsPanel from './transit/TransitDirectionsPanel';
+import useTransitRouting from './transit/useTransitRouting';
+import { MAP_CONTAINER_STYLE, MONTREAL_CENTER } from './transit/transitConstants';
 
 export default function TransitMap({
   routes = [],
@@ -40,15 +21,19 @@ export default function TransitMap({
   onSetTransitFrom,
   onSetTransitTo,
   travelMode = 'TRANSIT',
+  onSetTravelMode,
+  routeInfo,
+  onUseSelectedRouteEndpoints,
+  onPlanSelectedRoute,
+  onPlanTransitFromMap,
   onRouteInfoChange,
 }) {
   const [mapRef, setMapRef] = useState(null);
-  const [pathPreview, setPathPreview] = useState(null);
   const [pickMode, setPickMode] = useState('start');
-  const [directions, setDirections] = useState(null);
-
-  const fromAutocompleteRef = useRef(null);
-  const toAutocompleteRef = useRef(null);
+  const [departurePreset, setDeparturePreset] = useState('now');
+  const [directionsRouteIndex, setDirectionsRouteIndex] = useState(0);
+  const [showTrafficLayer, setShowTrafficLayer] = useState(false);
+  const [showTransitLayer, setShowTransitLayer] = useState(false);
 
   const selectedRoute = useMemo(
     () => routes.find((route) => String(route.id) === String(selectedRouteId)) || null,
@@ -56,44 +41,24 @@ export default function TransitMap({
   );
   const placesReady = Boolean(window.google?.maps?.places);
 
-  useEffect(() => {
-    let mounted = true;
-    async function computePreview() {
-      if (!startPoint || !endPoint) {
-        setPathPreview(null);
-        setDirections(null);
-        onRouteInfoChange?.(null);
-        return;
-      }
+  const departureTime = useMemo(() => {
+    const minutes = Number(departurePreset);
+    if (!Number.isFinite(minutes) || minutes <= 0) return new Date();
+    return new Date(Date.now() + minutes * 60000);
+  }, [departurePreset]);
 
-      const routePath = await fetchDirectionsPath(startPoint, endPoint, [travelMode, 'TRANSIT', 'DRIVING']);
-      if (!mounted) return;
-      setPathPreview(routePath);
-
-      if (!window.google?.maps) return;
-      const service = new window.google.maps.DirectionsService();
-      const mode = toTravelMode(travelMode);
-      const origin = toLatLngLiteral(startPoint);
-      const destination = toLatLngLiteral(endPoint);
-      if (!mode || !origin || !destination) return;
-
-      service.route({ origin, destination, travelMode: mode }, (result, status) => {
-        if (!mounted) return;
-        if (status === 'OK' && result) {
-          setDirections(result);
-          onRouteInfoChange?.(parseDurationAndDistance(result));
-        } else {
-          setDirections(null);
-          onRouteInfoChange?.(null);
-        }
-      });
-    }
-
-    computePreview();
-    return () => {
-      mounted = false;
-    };
-  }, [startPoint, endPoint, travelMode, onRouteInfoChange]);
+  const {
+    pathPreview,
+    directions,
+    isRouting,
+    routingError,
+  } = useTransitRouting({
+    startPoint,
+    endPoint,
+    travelMode,
+    departureTime,
+    onRouteInfoChange,
+  });
 
   useEffect(() => {
     if (!mapRef || !window.google?.maps) return;
@@ -140,6 +105,25 @@ export default function TransitMap({
     mapRef.setZoom(12);
   }, [mapRef, selectedRoute, startPoint, endPoint]);
 
+  useEffect(() => {
+    setDirectionsRouteIndex(0);
+  }, [directions]);
+
+  useEffect(() => {
+    if (!mapRef || !window.google?.maps) return undefined;
+
+    const trafficLayer = new window.google.maps.TrafficLayer();
+    const transitLayer = new window.google.maps.TransitLayer();
+
+    trafficLayer.setMap(showTrafficLayer ? mapRef : null);
+    transitLayer.setMap(showTransitLayer ? mapRef : null);
+
+    return () => {
+      trafficLayer.setMap(null);
+      transitLayer.setMap(null);
+    };
+  }, [mapRef, showTrafficLayer, showTransitLayer]);
+
   const onMapClick = (event) => {
     const point = toPointArray(event?.latLng);
     if (!point) return;
@@ -154,19 +138,13 @@ export default function TransitMap({
     setPickMode('start');
   };
 
-  const applyPlaceSelection = (autocomplete, type) => {
-    const place = autocomplete?.getPlace?.();
-    const location = place?.geometry?.location;
-    if (!location) return;
-
-    const point = [Number(location.lat().toFixed(6)), Number(location.lng().toFixed(6))];
-
+  const handlePlacePicked = (type, point, label) => {
     if (type === 'from') {
       onSetStartPoint?.(point);
-      onSetTransitFrom?.(place.formatted_address || place.name || transitFrom);
+      onSetTransitFrom?.(label || transitFrom);
     } else {
       onSetEndPoint?.(point);
-      onSetTransitTo?.(place.formatted_address || place.name || transitTo);
+      onSetTransitTo?.(label || transitTo);
     }
 
     if (mapRef) {
@@ -175,58 +153,80 @@ export default function TransitMap({
     }
   };
 
-  const startMarker = toLatLngLiteral(startPoint);
-  const endMarker = toLatLngLiteral(endPoint);
+  const clearRouteSelection = () => {
+    onSetStartPoint?.(null);
+    onSetEndPoint?.(null);
+    onRouteInfoChange?.(null);
+  };
+
+  const swapLocations = () => {
+    const prevFrom = transitFrom;
+    const prevTo = transitTo;
+    const prevStart = startPoint;
+    const prevEnd = endPoint;
+    onSetTransitFrom?.(prevTo);
+    onSetTransitTo?.(prevFrom);
+    onSetStartPoint?.(prevEnd);
+    onSetEndPoint?.(prevStart);
+  };
 
   return (
-    <div className="transit-map-wrap stack-8">
-      <div className="transit-map-toolbar stack-8">
-        <p>
-          Click map to set: <strong>{pickMode === 'start' ? 'Start point' : 'End point'}</strong>
-        </p>
+    <div className="transit-map-shell">
+      <TransitSearchOverlay
+        placesReady={placesReady}
+        transitFrom={transitFrom}
+        transitTo={transitTo}
+        onSetTransitFrom={onSetTransitFrom}
+        onSetTransitTo={onSetTransitTo}
+        onSwapLocations={swapLocations}
+        travelMode={travelMode}
+        onSetTravelMode={onSetTravelMode}
+        departurePreset={departurePreset}
+        onSetDeparturePreset={setDeparturePreset}
+        onPlacePicked={handlePlacePicked}
+      />
 
-        {placesReady ? (
-          <div className="row wrap gap-8">
-            <Autocomplete onLoad={(ref) => { fromAutocompleteRef.current = ref; }} onPlaceChanged={() => applyPlaceSelection(fromAutocompleteRef.current, 'from')}>
-              <input value={transitFrom} onChange={(e) => onSetTransitFrom?.(e.target.value)} placeholder="Search start location" style={{ minWidth: 250 }} />
-            </Autocomplete>
-            <Autocomplete onLoad={(ref) => { toAutocompleteRef.current = ref; }} onPlaceChanged={() => applyPlaceSelection(toAutocompleteRef.current, 'to')}>
-              <input value={transitTo} onChange={(e) => onSetTransitTo?.(e.target.value)} placeholder="Search destination" style={{ minWidth: 250 }} />
-            </Autocomplete>
-          </div>
-        ) : (
-          <div className="stack-8">
-            <div className="row wrap gap-8">
-              <input value={transitFrom} onChange={(e) => onSetTransitFrom?.(e.target.value)} placeholder="Start location (autocomplete unavailable)" style={{ minWidth: 250 }} />
-              <input value={transitTo} onChange={(e) => onSetTransitTo?.(e.target.value)} placeholder="Destination (autocomplete unavailable)" style={{ minWidth: 250 }} />
-            </div>
-            <p style={{ color: 'var(--warning)', margin: 0 }}>
-              Places autocomplete unavailable. Enable Places API for this key/project or check key restrictions.
-            </p>
-          </div>
-        )}
-
-        <div className="row wrap gap-8">
-          <button type="button" className={`btn ${pickMode === 'start' ? 'btn-primary-soft' : 'btn-soft'}`} onClick={() => setPickMode('start')}>
-            Pick start
-          </button>
-          <button type="button" className={`btn ${pickMode === 'end' ? 'btn-primary-soft' : 'btn-soft'}`} onClick={() => setPickMode('end')}>
-            Pick end
-          </button>
-          <button
-            type="button"
-            className="btn btn-soft"
-            onClick={() => {
-              onSetStartPoint?.(null);
-              onSetEndPoint?.(null);
-              setDirections(null);
-              onRouteInfoChange?.(null);
-            }}
-          >
-            Clear map route
-          </button>
-        </div>
+      <div className="transit-overlay transit-overlay-maptools">
+        <button
+          type="button"
+          className={`transit-maptool-btn ${showTrafficLayer ? 'is-active' : ''}`}
+          onClick={() => setShowTrafficLayer((v) => !v)}
+        >
+          Traffic
+        </button>
+        <button
+          type="button"
+          className={`transit-maptool-btn ${showTransitLayer ? 'is-active' : ''}`}
+          onClick={() => setShowTransitLayer((v) => !v)}
+        >
+          Transit
+        </button>
       </div>
+
+      <TransitControlsOverlay
+        pickMode={pickMode}
+        onSetPickMode={setPickMode}
+        selectedRoute={selectedRoute}
+        onUseSelectedRouteEndpoints={onUseSelectedRouteEndpoints}
+        onPlanSelectedRoute={onPlanSelectedRoute}
+        hasMapRoute={Boolean(startPoint && endPoint)}
+        onPlanTransitFromMap={onPlanTransitFromMap}
+        onClear={clearRouteSelection}
+        routeInfo={routeInfo}
+        travelMode={travelMode}
+        routes={routes}
+        selectedRouteId={selectedRouteId}
+        onSelectRoute={onSelectRoute}
+        placesReady={placesReady}
+        isRouting={isRouting}
+        routingError={routingError}
+      />
+
+      <TransitDirectionsPanel
+        directions={directions}
+        routeIndex={directionsRouteIndex}
+        onSetRouteIndex={setDirectionsRouteIndex}
+      />
 
       <MapShell
         mapContainerStyle={MAP_CONTAINER_STYLE}
@@ -235,124 +235,25 @@ export default function TransitMap({
         onLoad={setMapRef}
         onUnmount={() => setMapRef(null)}
         onClick={onMapClick}
+        options={{
+          mapTypeControl: true,
+          fullscreenControl: true,
+          streetViewControl: true,
+          zoomControl: true,
+        }}
       >
-        {routes.map((route) => {
-          const isSelected = String(route.id) === String(selectedRouteId);
-          const path = toPath(route.path);
-          const from = toLatLngLiteral(route.fromCoords);
-          const to = toLatLngLiteral(route.toCoords);
-
-          if (!path && !from && !to) return null;
-
-          return (
-            <React.Fragment key={route.id}>
-              {path ? (
-                <PolylineF
-                  path={path}
-                  options={{
-                    strokeColor: routeColor(isSelected),
-                    strokeOpacity: isSelected ? 0.95 : 0.6,
-                    strokeWeight: isSelected ? 5 : 3,
-                  }}
-                  onClick={() => onSelectRoute?.(route.id)}
-                />
-              ) : (
-                from &&
-                to && (
-                  <PolylineF
-                    path={[from, to]}
-                    options={{
-                      strokeColor: routeColor(isSelected),
-                      strokeOpacity: isSelected ? 0.95 : 0.6,
-                      strokeWeight: isSelected ? 5 : 3,
-                    }}
-                    onClick={() => onSelectRoute?.(route.id)}
-                  />
-                )
-              )}
-
-              {from && (
-                <MarkerF
-                  position={from}
-                  onClick={() => onSelectRoute?.(route.id)}
-                  title={`${route.line}: ${route.from}`}
-                />
-              )}
-              {to && (
-                <MarkerF
-                  position={to}
-                  onClick={() => onSelectRoute?.(route.id)}
-                  title={`${route.line}: ${route.to}`}
-                />
-              )}
-            </React.Fragment>
-          );
-        })}
-
-        {startMarker && (
-          <MarkerF
-            position={startMarker}
-            draggable
-            label="S"
-            onDragEnd={(event) => {
-              const point = toPointArray(event?.latLng);
-              if (point) onSetStartPoint?.(point);
-            }}
-            title="Trip start"
-          />
-        )}
-        {endMarker && (
-          <MarkerF
-            position={endMarker}
-            draggable
-            label="E"
-            onDragEnd={(event) => {
-              const point = toPointArray(event?.latLng);
-              if (point) onSetEndPoint?.(point);
-            }}
-            title="Trip end"
-          />
-        )}
-
-        {directions ? (
-          <DirectionsRenderer
-            directions={directions}
-            options={{
-              preserveViewport: true,
-              suppressMarkers: true,
-              polylineOptions: {
-                strokeColor: '#22c55e',
-                strokeOpacity: 0.95,
-                strokeWeight: 5,
-              },
-            }}
-          />
-        ) : (
-          startMarker &&
-          endMarker && (
-            <PolylineF
-              path={pathPreview || [startMarker, endMarker]}
-              options={{
-                strokeColor: '#22c55e',
-                strokeOpacity: 0.9,
-                strokeWeight: 5,
-                icons: pathPreview
-                  ? []
-                  : [
-                      {
-                        icon: {
-                          path: 'M 0,-1 0,1',
-                          strokeOpacity: 1,
-                          scale: 4,
-                        },
-                        offset: '0',
-                        repeat: '16px',
-                      },
-                    ],
-              }}
-            />
-          )
-        )}
+        <TransitMapLayers
+          routes={routes}
+          selectedRouteId={selectedRouteId}
+          onSelectRoute={onSelectRoute}
+          startPoint={startPoint}
+          endPoint={endPoint}
+          onSetStartPoint={onSetStartPoint}
+          onSetEndPoint={onSetEndPoint}
+          directions={directions}
+          directionsRouteIndex={directionsRouteIndex}
+          pathPreview={pathPreview}
+        />
       </MapShell>
     </div>
   );
