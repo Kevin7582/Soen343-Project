@@ -18,14 +18,33 @@ function requestDirections(service, request) {
 export default function useTransitRouting({
   startPoint,
   endPoint,
+  waypoints = [],
   travelMode,
-  departureTime,
+  plannerMode = 'depart_now',
+  plannedDateTime = '',
+  routePreferences = {},
   onRouteInfoChange,
 }) {
   const [pathPreview, setPathPreview] = useState(null);
   const [directions, setDirections] = useState(null);
   const [isRouting, setIsRouting] = useState(false);
   const [routingError, setRoutingError] = useState('');
+
+  const buildTime = () => {
+    const parsed = plannedDateTime ? new Date(plannedDateTime) : null;
+    return parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date();
+  };
+
+  const applyRouteInfo = (result) => {
+    setDirections(result);
+    onRouteInfoChange?.(parseDurationAndDistance(result));
+  };
+
+  const rerouteFromDraggedPath = (result) => {
+    if (!result) return;
+    applyRouteInfo(result);
+    setRoutingError('');
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -66,18 +85,36 @@ export default function useTransitRouting({
           destination,
           travelMode: mode,
           provideRouteAlternatives: true,
+          waypoints: waypoints
+            .map((waypoint) => toLatLngLiteral(waypoint?.point))
+            .filter(Boolean)
+            .map((location) => ({ location, stopover: true })),
+          avoidHighways: Boolean(routePreferences?.avoidHighways),
+          avoidTolls: Boolean(routePreferences?.avoidTolls),
+          avoidFerries: Boolean(routePreferences?.avoidFerries),
         };
 
+        const baseTime = buildTime();
         if (mode === window.google.maps.TravelMode.TRANSIT) {
-          request.transitOptions = { departureTime: departureTime || new Date() };
+          request.transitOptions = {};
+          if (plannerMode === 'arrive_by') {
+            request.transitOptions.arrivalTime = baseTime;
+          } else {
+            request.transitOptions.departureTime = baseTime;
+          }
+          if (routePreferences?.transitPreference === 'LESS_WALKING') {
+            request.transitOptions.routingPreference = window.google.maps.TransitRoutePreference.LESS_WALKING;
+          }
+          if (routePreferences?.transitPreference === 'FEWER_TRANSFERS') {
+            request.transitOptions.routingPreference = window.google.maps.TransitRoutePreference.FEWER_TRANSFERS;
+          }
         } else if (mode === window.google.maps.TravelMode.DRIVING) {
-          request.drivingOptions = { departureTime: departureTime || new Date() };
+          request.drivingOptions = { departureTime: baseTime };
         }
 
         const result = await requestDirections(service, request);
         if (!mounted) return;
-        setDirections(result);
-        onRouteInfoChange?.(parseDurationAndDistance(result));
+        applyRouteInfo(result);
       } catch (error) {
         if (!mounted) return;
         setDirections(null);
@@ -94,12 +131,13 @@ export default function useTransitRouting({
     return () => {
       mounted = false;
     };
-  }, [startPoint, endPoint, travelMode, departureTime, onRouteInfoChange]);
+  }, [startPoint, endPoint, waypoints, travelMode, plannerMode, plannedDateTime, routePreferences, onRouteInfoChange]);
 
   return {
     pathPreview,
     directions,
     isRouting,
     routingError,
+    rerouteFromDraggedPath,
   };
 }

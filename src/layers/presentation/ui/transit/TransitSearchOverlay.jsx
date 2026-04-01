@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import { Autocomplete } from '@react-google-maps/api';
 
 export default function TransitSearchOverlay({
+  external = false,
   placesReady,
   transitFrom,
   transitTo,
@@ -10,8 +11,10 @@ export default function TransitSearchOverlay({
   onSwapLocations,
   travelMode,
   onSetTravelMode,
-  departurePreset,
-  onSetDeparturePreset,
+  plannerMode,
+  onSetPlannerMode,
+  plannedDateTime,
+  onSetPlannedDateTime,
   onPlacePicked,
 }) {
   const fromAutocompleteRef = useRef(null);
@@ -28,7 +31,7 @@ export default function TransitSearchOverlay({
   };
 
   return (
-    <div className="transit-overlay transit-overlay-top">
+    <div className={external ? 'transit-search-panel' : 'transit-overlay transit-overlay-top'}>
       {placesReady ? (
         <>
           <Autocomplete
@@ -53,19 +56,24 @@ export default function TransitSearchOverlay({
 
       <select className="transit-mode-select" value={travelMode} onChange={(e) => onSetTravelMode?.(e.target.value)}>
         <option value="TRANSIT">Transit</option>
-        <option value="DRIVING">Driving</option>
         <option value="WALKING">Walking</option>
         <option value="BICYCLING">Bicycling</option>
+        <option value="DRIVING">Driving</option>
       </select>
       <button type="button" className="transit-swap-btn" onClick={onSwapLocations}>
         Swap
       </button>
-      <select className="transit-mode-select" value={departurePreset} onChange={(e) => onSetDeparturePreset?.(e.target.value)}>
-        <option value="now">Depart now</option>
-        <option value="15">In 15 min</option>
-        <option value="30">In 30 min</option>
-        <option value="60">In 60 min</option>
+      <select className="transit-mode-select" value={plannerMode} onChange={(e) => onSetPlannerMode?.(e.target.value)}>
+        <option value="depart_now">Depart now</option>
+        <option value="depart_at">Depart at</option>
+        <option value="arrive_by">Arrive by</option>
       </select>
+      <input
+        className="transit-search-input transit-datetime-input"
+        type="datetime-local"
+        value={plannedDateTime}
+        onChange={(e) => onSetPlannedDateTime?.(e.target.value)}
+      />
     </div>
   );
 }

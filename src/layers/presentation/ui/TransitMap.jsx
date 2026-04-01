@@ -30,8 +30,12 @@ export default function TransitMap({
 }) {
   const [mapRef, setMapRef] = useState(null);
   const [pickMode, setPickMode] = useState('start');
-  const [departurePreset, setDeparturePreset] = useState('now');
+  const [plannerMode, setPlannerMode] = useState('depart_now');
+  const [plannedDateTime, setPlannedDateTime] = useState('');
   const [directionsRouteIndex, setDirectionsRouteIndex] = useState(0);
+  const [selectedStepIndex, setSelectedStepIndex] = useState(-1);
+  const [highlightedStepPath, setHighlightedStepPath] = useState([]);
+  const [directionsCollapsed, setDirectionsCollapsed] = useState(false);
   const [showTrafficLayer, setShowTrafficLayer] = useState(false);
   const [showTransitLayer, setShowTransitLayer] = useState(false);
 
@@ -40,23 +44,23 @@ export default function TransitMap({
     [routes, selectedRouteId]
   );
   const placesReady = Boolean(window.google?.maps?.places);
-
-  const departureTime = useMemo(() => {
-    const minutes = Number(departurePreset);
-    if (!Number.isFinite(minutes) || minutes <= 0) return new Date();
-    return new Date(Date.now() + minutes * 60000);
-  }, [departurePreset]);
+  const emptyWaypoints = useMemo(() => [], []);
+  const emptyRoutePreferences = useMemo(() => ({}), []);
 
   const {
     pathPreview,
     directions,
     isRouting,
     routingError,
+    rerouteFromDraggedPath,
   } = useTransitRouting({
     startPoint,
     endPoint,
+    waypoints: emptyWaypoints,
     travelMode,
-    departureTime,
+    plannerMode,
+    plannedDateTime,
+    routePreferences: emptyRoutePreferences,
     onRouteInfoChange,
   });
 
@@ -107,6 +111,8 @@ export default function TransitMap({
 
   useEffect(() => {
     setDirectionsRouteIndex(0);
+    setSelectedStepIndex(-1);
+    setHighlightedStepPath([]);
   }, [directions]);
 
   useEffect(() => {
@@ -139,6 +145,7 @@ export default function TransitMap({
   };
 
   const handlePlacePicked = (type, point, label) => {
+    if (!point) return;
     if (type === 'from') {
       onSetStartPoint?.(point);
       onSetTransitFrom?.(label || transitFrom);
@@ -157,6 +164,8 @@ export default function TransitMap({
     onSetStartPoint?.(null);
     onSetEndPoint?.(null);
     onRouteInfoChange?.(null);
+    setHighlightedStepPath([]);
+    setSelectedStepIndex(-1);
   };
 
   const swapLocations = () => {
@@ -170,9 +179,15 @@ export default function TransitMap({
     onSetEndPoint?.(prevStart);
   };
 
+  const handleSelectStep = (index, step) => {
+    setSelectedStepIndex(index);
+    setHighlightedStepPath(step?.path || []);
+  };
+
   return (
-    <div className="transit-map-shell">
+    <div className="transit-root">
       <TransitSearchOverlay
+        external
         placesReady={placesReady}
         transitFrom={transitFrom}
         transitTo={transitTo}
@@ -181,12 +196,14 @@ export default function TransitMap({
         onSwapLocations={swapLocations}
         travelMode={travelMode}
         onSetTravelMode={onSetTravelMode}
-        departurePreset={departurePreset}
-        onSetDeparturePreset={setDeparturePreset}
+        plannerMode={plannerMode}
+        onSetPlannerMode={setPlannerMode}
+        plannedDateTime={plannedDateTime}
+        onSetPlannedDateTime={setPlannedDateTime}
         onPlacePicked={handlePlacePicked}
       />
 
-      <div className="transit-overlay transit-overlay-maptools">
+      <div className="transit-maptools-panel">
         <button
           type="button"
           className={`transit-maptool-btn ${showTrafficLayer ? 'is-active' : ''}`}
@@ -204,6 +221,7 @@ export default function TransitMap({
       </div>
 
       <TransitControlsOverlay
+        external
         pickMode={pickMode}
         onSetPickMode={setPickMode}
         selectedRoute={selectedRoute}
@@ -222,39 +240,52 @@ export default function TransitMap({
         routingError={routingError}
       />
 
-      <TransitDirectionsPanel
-        directions={directions}
-        routeIndex={directionsRouteIndex}
-        onSetRouteIndex={setDirectionsRouteIndex}
-      />
+      <div className="transit-main-layout">
+        <div className="transit-map-shell">
+          <MapShell
+            mapContainerStyle={MAP_CONTAINER_STYLE}
+            center={MONTREAL_CENTER}
+            zoom={12}
+            onLoad={setMapRef}
+            onUnmount={() => setMapRef(null)}
+            onClick={onMapClick}
+            options={{
+              mapTypeControl: true,
+              fullscreenControl: true,
+              streetViewControl: true,
+              zoomControl: true,
+            }}
+          >
+            <TransitMapLayers
+              routes={routes}
+              selectedRouteId={selectedRouteId}
+              onSelectRoute={onSelectRoute}
+              startPoint={startPoint}
+              endPoint={endPoint}
+              onSetStartPoint={onSetStartPoint}
+              onSetEndPoint={onSetEndPoint}
+              directions={directions}
+              directionsRouteIndex={directionsRouteIndex}
+              onDirectionsChanged={rerouteFromDraggedPath}
+              waypoints={emptyWaypoints}
+              poiResults={emptyWaypoints}
+              highlightedStepPath={highlightedStepPath}
+              pathPreview={pathPreview}
+            />
+          </MapShell>
+        </div>
 
-      <MapShell
-        mapContainerStyle={MAP_CONTAINER_STYLE}
-        center={MONTREAL_CENTER}
-        zoom={12}
-        onLoad={setMapRef}
-        onUnmount={() => setMapRef(null)}
-        onClick={onMapClick}
-        options={{
-          mapTypeControl: true,
-          fullscreenControl: true,
-          streetViewControl: true,
-          zoomControl: true,
-        }}
-      >
-        <TransitMapLayers
-          routes={routes}
-          selectedRouteId={selectedRouteId}
-          onSelectRoute={onSelectRoute}
-          startPoint={startPoint}
-          endPoint={endPoint}
-          onSetStartPoint={onSetStartPoint}
-          onSetEndPoint={onSetEndPoint}
+        <TransitDirectionsPanel
+          external
           directions={directions}
-          directionsRouteIndex={directionsRouteIndex}
-          pathPreview={pathPreview}
+          routeIndex={directionsRouteIndex}
+          onSetRouteIndex={setDirectionsRouteIndex}
+          selectedStepIndex={selectedStepIndex}
+          onSelectStep={handleSelectStep}
+          isCollapsed={directionsCollapsed}
+          onToggleCollapsed={() => setDirectionsCollapsed((v) => !v)}
         />
-      </MapShell>
+      </div>
     </div>
   );
 }

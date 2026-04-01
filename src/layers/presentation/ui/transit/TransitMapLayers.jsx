@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { DirectionsRenderer, MarkerF, PolylineF } from '@react-google-maps/api';
 import { toLatLngLiteral, toPath, toPointArray } from '../maps/mapUtils';
 import { routeColor } from './transitHelpers';
@@ -14,9 +14,27 @@ export default function TransitMapLayers({
   directions,
   directionsRouteIndex = 0,
   pathPreview,
+  onDirectionsChanged,
+  waypoints = [],
+  poiResults = [],
+  highlightedStepPath = [],
 }) {
+  const directionsRendererRef = useRef(null);
   const startMarker = toLatLngLiteral(startPoint);
   const endMarker = toLatLngLiteral(endPoint);
+  const stepPath = Array.isArray(highlightedStepPath)
+    ? highlightedStepPath
+      .map((point) => {
+        if (typeof point?.lat === 'function') {
+          return { lat: point.lat(), lng: point.lng() };
+        }
+        if (Number.isFinite(point?.lat) && Number.isFinite(point?.lng)) {
+          return { lat: Number(point.lat), lng: Number(point.lng) };
+        }
+        return toLatLngLiteral(point);
+      })
+      .filter(Boolean)
+    : [];
 
   return (
     <>
@@ -98,13 +116,58 @@ export default function TransitMapLayers({
         />
       )}
 
+      {waypoints
+        .map((waypoint) => ({ ...waypoint, position: toLatLngLiteral(waypoint?.point) }))
+        .filter((waypoint) => waypoint.position)
+        .map((waypoint, index) => (
+          <MarkerF
+            key={`waypoint-${index}`}
+            position={waypoint.position}
+            label={`${index + 1}`}
+            title={waypoint.label || `Waypoint ${index + 1}`}
+          />
+        ))}
+
+      {poiResults
+        .filter((poi) => poi?.position)
+        .map((poi) => (
+          <MarkerF
+            key={`poi-${poi.id}`}
+            position={poi.position}
+            title={poi.name || 'Point of interest'}
+          />
+        ))}
+
+      {stepPath.length > 1 && (
+        <PolylineF
+          path={stepPath}
+          options={{
+            strokeColor: '#f59e0b',
+            strokeOpacity: 0.95,
+            strokeWeight: 7,
+            zIndex: 90,
+          }}
+        />
+      )}
+
       {directions ? (
         <DirectionsRenderer
+          onLoad={(renderer) => {
+            directionsRendererRef.current = renderer;
+          }}
+          onUnmount={() => {
+            directionsRendererRef.current = null;
+          }}
+          onDirectionsChanged={() => {
+            const result = directionsRendererRef.current?.getDirections?.();
+            if (result) onDirectionsChanged?.(result);
+          }}
           directions={directions}
           options={{
             preserveViewport: true,
             suppressMarkers: true,
             routeIndex: directionsRouteIndex,
+            draggable: true,
             polylineOptions: {
               strokeColor: '#22c55e',
               strokeOpacity: 0.95,
