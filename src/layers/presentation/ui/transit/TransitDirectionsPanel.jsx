@@ -23,6 +23,10 @@ export default function TransitDirectionsPanel({
   onSelectStep,
   isCollapsed = false,
   onToggleCollapsed,
+  compareOptions = [],
+  compareUpdatedAt = '',
+  compareSource = '',
+  adaptMessage = '',
 }) {
   const routes = useMemo(() => directions?.routes || [], [directions]);
   const activeRoute = routes[routeIndex] || null;
@@ -82,6 +86,18 @@ export default function TransitDirectionsPanel({
                 </button>
               ))}
             </div>
+          </div>
+
+          <div className="transit-directions-card">
+            <h4>Live transit refresh</h4>
+            <p>{compareUpdatedAt ? `Last refresh: ${new Date(compareUpdatedAt).toLocaleTimeString()}` : 'No live refresh yet.'}</p>
+            {compareSource ? <p>Source: {compareSource}</p> : null}
+            {adaptMessage ? <p>{adaptMessage}</p> : null}
+            {compareOptions.slice(0, 3).map((option) => (
+              <p key={option.id}>
+                {option.label}: {option.durationMin} min | Walk {option.walkKm} km | Transfers {option.transfers}
+              </p>
+            ))}
           </div>
         </>
       )}

@@ -7,6 +7,16 @@ import TransitMapLayers from './transit/TransitMapLayers';
 import TransitDirectionsPanel from './transit/TransitDirectionsPanel';
 import useTransitRouting from './transit/useTransitRouting';
 import { MAP_CONTAINER_STYLE, MONTREAL_CENTER } from './transit/transitConstants';
+import { fetchTransitCompare } from '../../service-layer/transit/transitCompareService';
+
+function parseDurationToMin(text) {
+  const value = String(text || '');
+  const hoursMatch = value.match(/(\d+)\s*hour/);
+  const minMatch = value.match(/(\d+)\s*min/);
+  const hours = hoursMatch ? Number(hoursMatch[1]) : 0;
+  const mins = minMatch ? Number(minMatch[1]) : 0;
+  return hours * 60 + mins;
+}
 
 export default function TransitMap({
   routes = [],
@@ -37,6 +47,10 @@ export default function TransitMap({
   const [directionsCollapsed, setDirectionsCollapsed] = useState(false);
   const [showTrafficLayer, setShowTrafficLayer] = useState(false);
   const [showTransitLayer, setShowTransitLayer] = useState(false);
+  const [compareOptions, setCompareOptions] = useState([]);
+  const [compareUpdatedAt, setCompareUpdatedAt] = useState('');
+  const [compareSource, setCompareSource] = useState('');
+  const [adaptMessage, setAdaptMessage] = useState('');
 
   const selectedRoute = useMemo(
     () => routes.find((route) => String(route.id) === String(selectedRouteId)) || null,
@@ -125,6 +139,59 @@ export default function TransitMap({
       transitLayer.setMap(null);
     };
   }, [mapRef, showTrafficLayer, showTransitLayer]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function refreshCompare() {
+      if (!startPoint || !endPoint) {
+        if (active) {
+          setCompareOptions([]);
+          setCompareUpdatedAt('');
+          setCompareSource('');
+          setAdaptMessage('');
+        }
+        return;
+      }
+
+      try {
+        const result = await fetchTransitCompare({
+          startPoint,
+          endPoint,
+          plannedDateTime,
+          plannerMode,
+          numItineraries: 4,
+        });
+        if (!active || !result) return;
+
+        setCompareOptions(result.options || []);
+        setCompareUpdatedAt(result.updatedAt || new Date().toISOString());
+        setCompareSource(result.source || '');
+
+        const googleMin = parseDurationToMin(routeInfo?.durationText || '');
+        const best = (result.options || []).reduce(
+          (prev, item) => (!prev || item.durationMin < prev.durationMin ? item : prev),
+          null
+        );
+        if (best && googleMin > 0 && best.durationMin + 5 < googleMin) {
+          setAdaptMessage(`Faster transit option detected (${best.durationMin} min). Consider rerouting.`);
+        } else {
+          setAdaptMessage('');
+        }
+      } catch {
+        if (active) {
+          setAdaptMessage('');
+        }
+      }
+    }
+
+    refreshCompare();
+    const timer = setInterval(refreshCompare, 45000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [startPoint, endPoint, plannedDateTime, plannerMode, routeInfo?.durationText]);
 
   const onMapClick = (event) => {
     const point = toPointArray(event?.latLng);
@@ -275,6 +342,10 @@ export default function TransitMap({
           onSelectStep={handleSelectStep}
           isCollapsed={directionsCollapsed}
           onToggleCollapsed={() => setDirectionsCollapsed((v) => !v)}
+          compareOptions={compareOptions}
+          compareUpdatedAt={compareUpdatedAt}
+          compareSource={compareSource}
+          adaptMessage={adaptMessage}
         />
       </div>
     </div>
