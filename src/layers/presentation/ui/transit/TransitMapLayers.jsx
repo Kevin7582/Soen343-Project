@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React from 'react';
 import { DirectionsRenderer, MarkerF, PolylineF } from '@react-google-maps/api';
 import { toLatLngLiteral, toPath, toPointArray } from '../maps/mapUtils';
 import { routeColor } from './transitHelpers';
@@ -13,28 +13,11 @@ export default function TransitMapLayers({
   onSetEndPoint,
   directions,
   directionsRouteIndex = 0,
-  pathPreview,
-  onDirectionsChanged,
   waypoints = [],
   poiResults = [],
-  highlightedStepPath = [],
 }) {
-  const directionsRendererRef = useRef(null);
   const startMarker = toLatLngLiteral(startPoint);
   const endMarker = toLatLngLiteral(endPoint);
-  const stepPath = Array.isArray(highlightedStepPath)
-    ? highlightedStepPath
-      .map((point) => {
-        if (typeof point?.lat === 'function') {
-          return { lat: point.lat(), lng: point.lng() };
-        }
-        if (Number.isFinite(point?.lat) && Number.isFinite(point?.lng)) {
-          return { lat: Number(point.lat), lng: Number(point.lng) };
-        }
-        return toLatLngLiteral(point);
-      })
-      .filter(Boolean)
-    : [];
 
   return (
     <>
@@ -138,69 +121,23 @@ export default function TransitMapLayers({
           />
         ))}
 
-      {stepPath.length > 1 && (
-        <PolylineF
-          path={stepPath}
-          options={{
-            strokeColor: '#f59e0b',
-            strokeOpacity: 0.95,
-            strokeWeight: 7,
-            zIndex: 90,
-          }}
-        />
-      )}
-
       {directions ? (
         <DirectionsRenderer
-          onLoad={(renderer) => {
-            directionsRendererRef.current = renderer;
-          }}
-          onUnmount={() => {
-            directionsRendererRef.current = null;
-          }}
-          onDirectionsChanged={() => {
-            const result = directionsRendererRef.current?.getDirections?.();
-            if (result) onDirectionsChanged?.(result);
-          }}
           directions={directions}
           options={{
             preserveViewport: true,
             suppressMarkers: true,
+            suppressPolylines: false,
             routeIndex: directionsRouteIndex,
-            draggable: true,
+            draggable: false,
             polylineOptions: {
-              strokeColor: '#22c55e',
+              strokeColor: '#2563eb',
               strokeOpacity: 0.95,
-              strokeWeight: 5,
+              strokeWeight: 6,
             },
           }}
         />
-      ) : (
-        startMarker &&
-        endMarker && (
-          <PolylineF
-            path={pathPreview || [startMarker, endMarker]}
-            options={{
-              strokeColor: '#22c55e',
-              strokeOpacity: 0.9,
-              strokeWeight: 5,
-              icons: pathPreview
-                ? []
-                : [
-                    {
-                      icon: {
-                        path: 'M 0,-1 0,1',
-                        strokeOpacity: 1,
-                        scale: 4,
-                      },
-                      offset: '0',
-                      repeat: '16px',
-                    },
-                  ],
-            }}
-          />
-        )
-      )}
+      ) : null}
     </>
   );
 }

@@ -34,7 +34,6 @@ export default function TransitMap({
   const [plannedDateTime, setPlannedDateTime] = useState('');
   const [directionsRouteIndex, setDirectionsRouteIndex] = useState(0);
   const [selectedStepIndex, setSelectedStepIndex] = useState(-1);
-  const [highlightedStepPath, setHighlightedStepPath] = useState([]);
   const [directionsCollapsed, setDirectionsCollapsed] = useState(false);
   const [showTrafficLayer, setShowTrafficLayer] = useState(false);
   const [showTransitLayer, setShowTransitLayer] = useState(false);
@@ -48,11 +47,9 @@ export default function TransitMap({
   const emptyRoutePreferences = useMemo(() => ({}), []);
 
   const {
-    pathPreview,
     directions,
     isRouting,
     routingError,
-    rerouteFromDraggedPath,
   } = useTransitRouting({
     startPoint,
     endPoint,
@@ -112,7 +109,6 @@ export default function TransitMap({
   useEffect(() => {
     setDirectionsRouteIndex(0);
     setSelectedStepIndex(-1);
-    setHighlightedStepPath([]);
   }, [directions]);
 
   useEffect(() => {
@@ -164,7 +160,6 @@ export default function TransitMap({
     onSetStartPoint?.(null);
     onSetEndPoint?.(null);
     onRouteInfoChange?.(null);
-    setHighlightedStepPath([]);
     setSelectedStepIndex(-1);
   };
 
@@ -181,7 +176,6 @@ export default function TransitMap({
 
   const handleSelectStep = (index, step) => {
     setSelectedStepIndex(index);
-    setHighlightedStepPath(step?.path || []);
   };
 
   return (
@@ -266,11 +260,8 @@ export default function TransitMap({
               onSetEndPoint={onSetEndPoint}
               directions={directions}
               directionsRouteIndex={directionsRouteIndex}
-              onDirectionsChanged={rerouteFromDraggedPath}
               waypoints={emptyWaypoints}
               poiResults={emptyWaypoints}
-              highlightedStepPath={highlightedStepPath}
-              pathPreview={pathPreview}
             />
           </MapShell>
         </div>

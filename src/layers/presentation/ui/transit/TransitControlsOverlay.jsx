@@ -52,7 +52,7 @@ export default function TransitControlsOverlay({
         {!!routingError && <div className="transit-info-inline is-error">{routingError}</div>}
 
         <div className="transit-route-chips-row">
-          {routes.map((route) => {
+          {routes.map((route, index) => {
             const selected = String(route.id) === String(selectedRouteId);
             return (
               <button
@@ -61,7 +61,7 @@ export default function TransitControlsOverlay({
                 className={`transit-route-chip ${selected ? 'is-selected' : ''}`}
                 onClick={() => onSelectRoute?.(route.id)}
               >
-                {route.line} {route.delay > 0 ? `| +${route.delay}m` : ''}
+                Route {index + 1} {route.delay > 0 ? `| +${route.delay}m` : ''}
               </button>
             );
           })}
@@ -118,7 +118,7 @@ export default function TransitControlsOverlay({
       )}
 
       <div className="transit-overlay transit-overlay-bottom">
-        {routes.map((route) => {
+        {routes.map((route, index) => {
           const selected = String(route.id) === String(selectedRouteId);
           return (
             <button
@@ -127,7 +127,7 @@ export default function TransitControlsOverlay({
               className={`transit-route-chip ${selected ? 'is-selected' : ''}`}
               onClick={() => onSelectRoute?.(route.id)}
             >
-              {route.line} {route.delay > 0 ? `| +${route.delay}m` : ''}
+              Route {index + 1} {route.delay > 0 ? `| +${route.delay}m` : ''}
             </button>
           );
         })}

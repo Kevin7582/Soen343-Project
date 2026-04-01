@@ -668,7 +668,7 @@ function CitizenViews({
               <h3>Selected route</h3>
               {selectedTransitRoute ? (
                 <>
-                  <p className="transit-route-line">{selectedTransitRoute.line}</p>
+                  <p className="transit-route-line">Route selected</p>
                   <p>{selectedTransitRoute.from} {'->'} {selectedTransitRoute.to}</p>
                   <p>Next departure: {selectedTransitRoute.nextDeparture}</p>
                   <p>Delay: {selectedTransitRoute.delay} min</p>
