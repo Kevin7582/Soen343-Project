@@ -2,7 +2,10 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AuthProvider, ROLES, useAuth } from '../context/AuthContext';
 import { RentalProvider, useRental } from '../context/RentalContext';
 import AdminDashboard from "./AdminDashboard";
+import TransitMap from './TransitMap';
 import RecommendationService from '../../service-layer/recommendationService';
+import { createRoleDashboardCreator } from './roleDashboardFactory';
+import { supabase } from '../../data-layer/supabaseClient';
 import {
   completeParkingReservation,
   cancelParkingReservation,
@@ -17,12 +20,8 @@ import {
   startParkingReservation,
   updateParkingReservationDuration,
 } from '../../service-layer/mobilityService';
-
-const TABS = {
-  citizen: ['home', 'recommendations', 'search', 'transit', 'parking', 'activeRental', 'profile'],
-  provider: ['home', 'vehicles', 'rentalData', 'profile'],
-  admin: ['home', 'rentalAnalytics', 'gatewayAnalytics', 'adminDashboard', 'profile'],
-};
+import VehicleMap from './VehicleMap';
+import ParkingMap from './ParkingMap';
 
 const TAB_LABELS = {
   home: 'Home',
@@ -175,7 +174,7 @@ function RoleButton({ label, active, onClick }) {
 }
 
 function Dashboard() {
-  const { user, isCitizen, isProvider, isAdmin, logout, updatePreferences } = useAuth();
+  const { user, logout, updatePreferences } = useAuth();
   const {
     reservation,
     activeRental,
@@ -196,17 +195,37 @@ function Dashboard() {
   const [transitPlans, setTransitPlans] = useState([]);
   const [transitFrom, setTransitFrom] = useState('Downtown');
   const [transitTo, setTransitTo] = useState('Campus');
+  const [selectedTransitRouteId, setSelectedTransitRouteId] = useState('');
+  const [transitStartPoint, setTransitStartPoint] = useState(null);
+  const [transitEndPoint, setTransitEndPoint] = useState(null);
+  const [transitTravelMode, setTransitTravelMode] = useState('TRANSIT');
+  const [transitRouteInfo, setTransitRouteInfo] = useState(null);
   const [mobilityError, setMobilityError] = useState('');
 
   const { loadingData, vehiclesData, transitRoutes, parkingSpots, providerRentals, refreshDashboardData } = useDashboardData();
 
-  const tabs = getTabsForUser({ isCitizen, isProvider, isAdmin });
+  const roleDashboardCreator = useMemo(
+    () => createRoleDashboardCreator(user?.role),
+    [user?.role]
+  );
+  const tabs = useMemo(() => roleDashboardCreator.createTabs(), [roleDashboardCreator]);
 
   useEffect(() => {
     if (!tabs.includes(tab)) {
       setTab('home');
     }
   }, [tab, tabs]);
+
+  useEffect(() => {
+    if (!transitRoutes.length) {
+      setSelectedTransitRouteId('');
+      return;
+    }
+    const exists = transitRoutes.some((route) => String(route.id) === String(selectedTransitRouteId));
+    if (!exists) {
+      setSelectedTransitRouteId(String(transitRoutes[0].id));
+    }
+  }, [transitRoutes, selectedTransitRouteId]);
 
   useEffect(() => {
     let mounted = true;
@@ -247,6 +266,11 @@ function Dashboard() {
     const maxRadius = parseFloat(radius) || 2;
     return list.filter((vehicle) => vehicle.distance <= maxRadius);
   }, [vehiclesData, vehicleType, radius]);
+
+  const selectedTransitRoute = useMemo(
+    () => transitRoutes.find((route) => String(route.id) === String(selectedTransitRouteId)) || null,
+    [transitRoutes, selectedTransitRouteId]
+  );
 
   const handleReserveVehicle = async (vehicle) => {
     if (reservation || activeRental) {
@@ -367,20 +391,108 @@ function Dashboard() {
     }
   };
 
-  const handlePlanTransit = async (route) => {
+  const handlePlanTransit = async (route, fromOverride, toOverride) => {
     if (!user?.id) return;
-    if (!transitFrom.trim() || !transitTo.trim()) {
+    const fromValue = String(fromOverride ?? transitFrom).trim();
+    const toValue = String(toOverride ?? transitTo).trim();
+    if (!fromValue || !toValue) {
       setMobilityError('Enter both origin and destination to plan a transit trip.');
       return;
     }
     setMobilityError('');
     try {
-      const plan = await planTransitTrip(user.id, route, transitFrom.trim(), transitTo.trim());
+      const plan = await planTransitTrip(user.id, route, fromValue, toValue);
       setTransitPlans((prev) => [plan, ...prev].slice(0, 10));
     } catch (error) {
       setMobilityError(error?.message || 'Unable to plan transit trip.');
     }
   };
+
+  const handleUseSelectedRouteEndpoints = () => {
+    if (!selectedTransitRoute?.fromCoords || !selectedTransitRoute?.toCoords) return;
+    setTransitStartPoint(selectedTransitRoute.fromCoords);
+    setTransitEndPoint(selectedTransitRoute.toCoords);
+    setTransitFrom(selectedTransitRoute.from || 'Route start');
+    setTransitTo(selectedTransitRoute.to || 'Route end');
+  };
+
+  const handlePlanTransitFromMap = async () => {
+    if (!transitStartPoint || !transitEndPoint) {
+      setMobilityError('Set both start and end points on the map first.');
+      return;
+    }
+
+    const route = selectedTransitRoute || {
+      id: 'custom-map-route',
+      line: `${transitTravelMode} route`,
+      nextDeparture: 'N/A',
+      from: transitFrom,
+      to: transitTo,
+    };
+
+    const fromLabel = `${transitFrom.trim() || 'Map start'} (${transitStartPoint[0]}, ${transitStartPoint[1]})`;
+    const toLabel = `${transitTo.trim() || 'Map end'} (${transitEndPoint[0]}, ${transitEndPoint[1]})`;
+    await handlePlanTransit(route, fromLabel, toLabel);
+  };
+
+  const roleMainContent = roleDashboardCreator.createMainContent({
+    renderCitizen: () => (
+      <CitizenViews
+        tab={tab}
+        user={user}
+        onSelectTab={setTab}
+        vehicleType={vehicleType}
+        setVehicleType={setVehicleType}
+        radius={radius}
+        setRadius={setRadius}
+        vehicles={filteredVehicles}
+        reservation={reservation}
+        activeRental={activeRental}
+        hasOpenVehicleFlow={Boolean(reservation || activeRental)}
+        paymentDone={paymentDone}
+        onReserveVehicle={handleReserveVehicle}
+        onCancelReservation={clearReservation}
+        onProceedPayment={beginPayment}
+        onReturnVehicle={returnVehicle}
+        transitRoutes={transitRoutes}
+        parkingSpots={parkingSpots}
+        transitPlans={transitPlans}
+        transitFrom={transitFrom}
+        transitTo={transitTo}
+        setTransitFrom={setTransitFrom}
+        setTransitTo={setTransitTo}
+        selectedTransitRoute={selectedTransitRoute}
+        onSelectTransitRoute={setSelectedTransitRouteId}
+        transitStartPoint={transitStartPoint}
+        transitEndPoint={transitEndPoint}
+        onSetTransitStartPoint={setTransitStartPoint}
+        onSetTransitEndPoint={setTransitEndPoint}
+        transitTravelMode={transitTravelMode}
+        onSetTransitTravelMode={setTransitTravelMode}
+        transitRouteInfo={transitRouteInfo}
+        onTransitRouteInfoChange={setTransitRouteInfo}
+        onUseSelectedRouteEndpoints={handleUseSelectedRouteEndpoints}
+        onPlanTransitFromMap={handlePlanTransitFromMap}
+        onPlanTransit={handlePlanTransit}
+        parkingReservation={parkingReservation}
+        parkingDuration={parkingDuration}
+        setParkingDuration={setParkingDuration}
+        onReserveParking={handleReserveParking}
+        onCancelParking={handleCancelParking}
+        onStartParking={handleStartParking}
+        onCompleteParking={handleCompleteParking}
+        onUpdateParkingDuration={handleUpdateParkingDuration}
+      />
+    ),
+    renderProvider: () => (
+      <ProviderViews
+        tab={tab}
+        vehiclesData={vehiclesData}
+        providerRentals={providerRentals}
+      />
+    ),
+    renderAdmin: () => <AdminViews tab={tab} />,
+  });
 
   return (
     <div className="dashboard">
@@ -392,52 +504,7 @@ function Dashboard() {
         {!!rentalError && <div className="panel auth-error">{rentalError}</div>}
         {!!mobilityError && <div className="panel auth-error">{mobilityError}</div>}
 
-        {isCitizen && (
-          <CitizenViews
-            tab={tab}
-            user={user}
-            onSelectTab={setTab}
-            vehicleType={vehicleType}
-            setVehicleType={setVehicleType}
-            radius={radius}
-            setRadius={setRadius}
-            vehicles={filteredVehicles}
-            reservation={reservation}
-            activeRental={activeRental}
-            hasOpenVehicleFlow={Boolean(reservation || activeRental)}
-            paymentDone={paymentDone}
-            onReserveVehicle={handleReserveVehicle}
-            onCancelReservation={clearReservation}
-            onProceedPayment={beginPayment}
-            onReturnVehicle={returnVehicle}
-            transitRoutes={transitRoutes}
-            parkingSpots={parkingSpots}
-            transitPlans={transitPlans}
-            transitFrom={transitFrom}
-            transitTo={transitTo}
-            setTransitFrom={setTransitFrom}
-            setTransitTo={setTransitTo}
-            onPlanTransit={handlePlanTransit}
-            parkingReservation={parkingReservation}
-            parkingDuration={parkingDuration}
-            setParkingDuration={setParkingDuration}
-            onReserveParking={handleReserveParking}
-            onCancelParking={handleCancelParking}
-            onStartParking={handleStartParking}
-            onCompleteParking={handleCompleteParking}
-            onUpdateParkingDuration={handleUpdateParkingDuration}
-          />
-        )}
-
-        {isProvider && (
-          <ProviderViews
-            tab={tab}
-            vehiclesData={vehiclesData}
-            providerRentals={providerRentals}
-          />
-        )}
-
-        {isAdmin && <AdminViews tab={tab} />}
+        {roleMainContent}
 
         {tab === 'profile' && <Profile user={user} role={user?.role} onUpdatePreferences={updatePreferences} />}
       </main>
@@ -494,6 +561,18 @@ function CitizenViews({
   transitTo,
   setTransitFrom,
   setTransitTo,
+  selectedTransitRoute,
+  onSelectTransitRoute,
+  transitStartPoint,
+  transitEndPoint,
+  onSetTransitStartPoint,
+  onSetTransitEndPoint,
+  transitTravelMode,
+  onSetTransitTravelMode,
+  transitRouteInfo,
+  onTransitRouteInfoChange,
+  onUseSelectedRouteEndpoints,
+  onPlanTransitFromMap,
   onPlanTransit,
   parkingReservation,
   parkingDuration,
@@ -536,6 +615,13 @@ function CitizenViews({
               <input value={radius} onChange={(e) => setRadius(e.target.value)} />
             </label>
           </div>
+           <VehicleMap
+  vehicles={vehicles}
+  onReserve={onReserveVehicle}
+  reservation={reservation}
+  activeRental={activeRental}
+/>
+
 
           <div className="grid-2">
             {vehicles.map((vehicle) => (
@@ -562,40 +648,110 @@ function CitizenViews({
       )}
 
       {tab === 'transit' && (
-        <Section title="Public transit" subtitle="Routes and schedules">
+        <Section title="Public transit" subtitle="Google Maps routing, route overlays, and trip planning">
           <div className="panel stack-12">
-            <h3>Plan a trip</h3>
-            <div className="row gap-8 wrap">
-              <label>
+            <h3>Plan your trip</h3>
+            <div className="row wrap gap-8">
+              <label style={{ flex: 1, minWidth: 220 }}>
                 From
-                <input value={transitFrom} onChange={(e) => setTransitFrom(e.target.value)} />
+                <input value={transitFrom} onChange={(e) => setTransitFrom(e.target.value)} placeholder="Type an address or place" />
               </label>
-              <label>
+              <label style={{ flex: 1, minWidth: 220 }}>
                 To
-                <input value={transitTo} onChange={(e) => setTransitTo(e.target.value)} />
+                <input value={transitTo} onChange={(e) => setTransitTo(e.target.value)} placeholder="Type an address or place" />
+              </label>
+              <label style={{ minWidth: 180 }}>
+                Travel mode
+                <select value={transitTravelMode} onChange={(e) => onSetTransitTravelMode(e.target.value)}>
+                  <option value="TRANSIT">Transit</option>
+                  <option value="DRIVING">Driving</option>
+                  <option value="WALKING">Walking</option>
+                  <option value="BICYCLING">Bicycling</option>
+                </select>
               </label>
             </div>
+            <div className="row wrap gap-8">
+              <button
+                className="btn btn-primary"
+                disabled={!selectedTransitRoute}
+                onClick={() => selectedTransitRoute && onPlanTransit(selectedTransitRoute)}
+              >
+                {selectedTransitRoute ? `Plan ${selectedTransitRoute.line}` : 'Select a route on the map'}
+              </button>
+              <button
+                className="btn btn-soft"
+                disabled={!selectedTransitRoute}
+                onClick={onUseSelectedRouteEndpoints}
+              >
+                Use selected route endpoints
+              </button>
+              <button
+                className="btn btn-primary-soft"
+                disabled={!transitStartPoint || !transitEndPoint}
+                onClick={onPlanTransitFromMap}
+              >
+                Save map route plan
+              </button>
+            </div>
+            {transitRouteInfo && (
+              <p>
+                Google route preview: {transitRouteInfo.distanceText || 'N/A'} in {transitRouteInfo.durationText || 'N/A'} ({transitTravelMode.toLowerCase()}).
+              </p>
+            )}
           </div>
+
+          <TransitMap
+            routes={transitRoutes}
+            selectedRouteId={selectedTransitRoute?.id}
+            onSelectRoute={onSelectTransitRoute}
+            startPoint={transitStartPoint}
+            endPoint={transitEndPoint}
+            onSetStartPoint={onSetTransitStartPoint}
+            onSetEndPoint={onSetTransitEndPoint}
+            transitFrom={transitFrom}
+            transitTo={transitTo}
+            onSetTransitFrom={setTransitFrom}
+            onSetTransitTo={setTransitTo}
+            travelMode={transitTravelMode}
+            onRouteInfoChange={onTransitRouteInfoChange}
+          />
 
           <div className="grid-2">
-            {transitRoutes.map((route) => (
-              <Card
-                key={route.id}
-                title={route.line}
-                text={`${route.from} -> ${route.to} | Next: ${route.nextDeparture}${route.delay ? ` | Delay: ${route.delay} min` : ''}`}
-                action={<button className="btn btn-primary" onClick={() => onPlanTransit(route)}>Plan this route</button>}
-              />
-            ))}
+            {transitRoutes.map((route) => {
+              const selected = String(route.id) === String(selectedTransitRoute?.id);
+              return (
+                <div key={route.id} className="card stack-8" style={selected ? { borderColor: 'var(--primary)' } : undefined}>
+                  <h3>{route.line}</h3>
+                  <p>{route.from} {'->'} {route.to}</p>
+                  <p>Next departure: {route.nextDeparture}</p>
+                  <p>Delay: {route.delay} min</p>
+                  <div className="row gap-8 wrap">
+                    <button className={`btn ${selected ? 'btn-primary-soft' : 'btn-soft'}`} onClick={() => onSelectTransitRoute(route.id)}>
+                      {selected ? 'Selected' : 'Preview on map'}
+                    </button>
+                    <button className="btn btn-primary" onClick={() => onPlanTransit(route)}>
+                      Save route plan
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
-          <div className="panel stack-8">
-            <h3>Recent transit plans</h3>
-            {transitPlans.length === 0 && <p>No planned trips yet.</p>}
-            {transitPlans.map((plan) => (
-              <p key={plan.id}>
-                {plan.from} {'->'} {plan.to} ({new Date(plan.plannedAt).toLocaleString()})
-              </p>
-            ))}
+          <div className="panel stack-12">
+            <h3>Your latest transit plans</h3>
+            {transitPlans.length === 0 && <p>No transit plans yet. Use the map and save a route.</p>}
+            {transitPlans.length > 0 && (
+              <div className="stack-8">
+                {transitPlans.map((plan) => (
+                  <div key={plan.id} className="card">
+                    <p><strong>{plan.from}</strong> {'->'} <strong>{plan.to}</strong></p>
+                    <p>{plan.notes || `Route #${plan.routeId}`}</p>
+                    <p>Planned at: {new Date(plan.plannedAt).toLocaleString()}</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </Section>
       )}
@@ -629,6 +785,11 @@ function CitizenViews({
               </div>
             )}
           </div>
+            <ParkingMap
+                  spots={parkingSpots}
+                  onReserve={onReserveParking}
+                   parkingReservation={parkingReservation}
+                />
 
           <div className="grid-2">
             {parkingSpots.map((spot) => (
@@ -726,48 +887,98 @@ function Card({ title, text, action }) {
 }
 
 function ProviderVehicles({ initialVehicles = [] }) {
-  const [vehicles, setVehicles] = useState(initialVehicles.length ? initialVehicles : FALLBACK_PROVIDER_VEHICLES);
+  const [vehicles, setVehicles] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (initialVehicles.length) {
-      setVehicles(initialVehicles);
+    async function load() {
+      const { data, error } = await supabase
+        .from('vehicles')
+        .select('*');
+      if (!error && data) {
+        setVehicles(data);
+      } else {
+        setVehicles(FALLBACK_PROVIDER_VEHICLES);
+      }
+      setLoading(false);
     }
-  }, [initialVehicles]);
+    load();
+  }, []);
 
-  const addVehicle = () => {
-    setVehicles((previousVehicles) => [
-      ...previousVehicles,
-      {
-        id: `v${Date.now()}`,
-        type: 'scooter',
-        name: `Vehicle #${previousVehicles.length + 1}`,
-        status: 'available',
-        maintenance: 'ok',
-      },
-    ]);
+  const addVehicle = async () => {
+  const type = window.prompt('Vehicle type (bike or scooter):', 'scooter');
+  if (!type) return;
+  
+  const location = window.prompt('Vehicle location:', 'Montreal Downtown');
+  if (!location) return;
+
+  const newVehicle = {
+    type: type.toLowerCase(),
+    location: location,
+    available: true,
+    provider_id: 1,
+  };
+  const { data, error } = await supabase
+    .from('vehicles')
+    .insert(newVehicle)
+    .select()
+    .single();
+  if (!error && data) {
+    setVehicles((prev) => [...prev, data]);
+  }
+};
+
+  const toggleVehicleStatus = async (vehicleId) => {
+    const vehicle = vehicles.find((v) => v.id === vehicleId);
+    if (!vehicle) return;
+    const newAvailable = !vehicle.available;
+    const { error } = await supabase
+      .from('vehicles')
+      .update({ available: newAvailable })
+      .eq('id', vehicleId);
+    if (!error) {
+      setVehicles((prev) =>
+        prev.map((v) =>
+          v.id === vehicleId ? { ...v, available: newAvailable } : v
+        )
+      );
+    }
   };
 
-  const toggleVehicleStatus = (vehicleId) => {
-    setVehicles((previousVehicles) => previousVehicles.map((vehicle) => {
-      if (vehicle.id !== vehicleId) return vehicle;
-
-      const nextStatus = vehicle.status === 'available' ? 'unavailable' : 'available';
-      return { ...vehicle, status: nextStatus };
-    }));
+  const removeVehicle = async (vehicleId) => {
+    const { error } = await supabase
+      .from('vehicles')
+      .delete()
+      .eq('id', vehicleId);
+    if (!error) {
+      setVehicles((prev) => prev.filter((v) => v.id !== vehicleId));
+    }
   };
+
+  if (loading) return (
+    <Section title="Vehicles" subtitle="Fleet management">
+      <div className="panel">Loading...</div>
+    </Section>
+  );
 
   return (
     <Section title="Vehicles" subtitle="Fleet management">
       <button className="btn btn-primary" onClick={addVehicle}>Add vehicle</button>
-
       <div className="grid-2">
         {vehicles.map((vehicle) => (
           <div className="card" key={vehicle.id}>
-            <h3>{vehicle.name}</h3>
+            <h3>{vehicle.type} #{vehicle.id}</h3>
             <p>{vehicle.type}</p>
-            <p>Status: {vehicle.status}</p>
+            <p>Status: {vehicle.available ? 'available' : 'unavailable'}</p>
             <button className="btn btn-soft" onClick={() => toggleVehicleStatus(vehicle.id)}>
               Toggle status
+            </button>
+            <button
+              className="btn btn-soft"
+              style={{ color: '#ef4444', marginTop: '8px' }}
+              onClick={() => removeVehicle(vehicle.id)}
+            >
+              Remove
             </button>
           </div>
         ))}
@@ -775,7 +986,6 @@ function ProviderVehicles({ initialVehicles = [] }) {
     </Section>
   );
 }
-
 function ProviderRentalData({ rentals = [] }) {
   return (
     <Section title="Rental records" subtitle="Manage and view rental data">
@@ -1033,9 +1243,3 @@ function useDashboardData() {
   };
 }
 
-function getTabsForUser({ isCitizen, isProvider, isAdmin }) {
-  if (isAdmin) return TABS.admin;
-  if (isProvider) return TABS.provider;
-  if (isCitizen) return TABS.citizen;
-  return TABS.citizen;
-}

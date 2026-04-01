@@ -1,0 +1,17 @@
+classDiagram
+    class SupabaseClientSingleton {
+      -instance: SupabaseClient
+      -SupabaseClientSingleton()
+      +getInstance(): SupabaseClient
+    }
+
+    class AuthContext
+    class MobilityService
+    class AdminDashboardService
+    class RecommendationService
+
+    AuthContext --> SupabaseClientSingleton : uses
+    MobilityService --> SupabaseClientSingleton : uses
+    AdminDashboardService --> SupabaseClientSingleton : uses
+    RecommendationService --> SupabaseClientSingleton : uses
+

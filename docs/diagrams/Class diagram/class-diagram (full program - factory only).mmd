@@ -1,0 +1,146 @@
+classDiagram
+direction LR
+
+class App {
+  +render(): JSX
+}
+
+class Dashboard {
+  -tab: string
+  -vehicleType: string
+  -radius: string
+  -paymentDone: boolean
+  -parkingDuration: string
+  +buildRoleUI(userRole): JSX
+  +render(): JSX
+}
+
+class RoleDashboardCreator {
+  <<abstract>>
+  +createTabs(): string[]
+  +createMainContent(renderers): JSX
+}
+
+class CitizenDashboardCreator {
+  +createTabs(): string[]
+  +createMainContent(renderers): JSX
+}
+
+class ProviderDashboardCreator {
+  +createTabs(): string[]
+  +createMainContent(renderers): JSX
+}
+
+class AdminDashboardCreator {
+  +createTabs(): string[]
+  +createMainContent(renderers): JSX
+}
+
+class RoleDashboardFactory {
+  +createRoleDashboardCreator(role): RoleDashboardCreator
+}
+
+class AuthContext {
+  -user: AppUser
+  -authLoading: boolean
+  +login(email, password, selectedRole): Promise~Result~
+  +register(name, email, password, role): Promise~Result~
+  +logout(): Promise~void~
+}
+
+class RentalContext {
+  -reservation: Reservation
+  -activeRental: Rental
+  -rentalLoading: boolean
+  -rentalError: string
+  +reserveVehicle(vehicle): Promise~Reservation~
+  +startRental(paymentTxId): Promise~Rental~
+  +endRental(cost): Promise~Rental~
+}
+
+class MobilityService {
+  +fetchVehicles(): Promise~Vehicle[]~
+  +fetchTransitRoutes(): Promise~TransitRoute[]~
+  +fetchParkingSpots(): Promise~ParkingSpot[]~
+  +fetchProviderRentals(): Promise~ProviderRentalRecord[]~
+  +reserveVehicle(userId, vehicle): Promise~Reservation~
+}
+
+class RecommendationService {
+  +getRecommendations(preferences): Promise~RecommendationResult~
+}
+
+class AdminDashboardService {
+  +getTotalUsers(): Promise~int~
+  +getActiveRentals(): Promise~Rental[]~
+  +getCompletedTripsToday(): Promise~int~
+  +getDashboardSummary(): Promise~DashboardSummary~
+}
+
+class AdminDashboard {
+  -data: DashboardSummary
+  -loading: boolean
+  +loadData(): Promise~void~
+  +render(): JSX
+}
+
+class SupabaseClient {
+  +query(table, criteria): Promise~any~
+}
+
+class Vehicle {
+  +id: string
+  +type: string
+  +name: string
+  +status: string
+}
+
+class ParkingSpot {
+  +id: string
+  +address: string
+  +available: number
+  +total: number
+}
+
+class Reservation {
+  +id: string
+  +userId: string
+  +vehicleId: string
+  +status: string
+}
+
+class Rental {
+  +id: string
+  +userId: string
+  +vehicleId: string
+  +status: string
+}
+
+class DashboardSummary {
+  +totalUsers: number
+  +activeRentalsCount: number
+  +completedToday: number
+}
+
+App --> Dashboard
+Dashboard --> RoleDashboardFactory
+RoleDashboardFactory --> RoleDashboardCreator
+RoleDashboardCreator <|-- CitizenDashboardCreator
+RoleDashboardCreator <|-- ProviderDashboardCreator
+RoleDashboardCreator <|-- AdminDashboardCreator
+
+Dashboard --> AuthContext
+Dashboard --> RentalContext
+Dashboard --> MobilityService
+Dashboard --> RecommendationService
+Dashboard --> AdminDashboard
+AdminDashboard --> AdminDashboardService
+
+AuthContext --> SupabaseClient
+MobilityService --> SupabaseClient
+RecommendationService --> SupabaseClient
+AdminDashboardService --> SupabaseClient
+
+Reservation --> Vehicle
+Rental --> Vehicle
+

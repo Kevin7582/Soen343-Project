@@ -1,0 +1,126 @@
+classDiagram
+direction LR
+
+class App {
+  +render(): JSX
+}
+
+class Dashboard {
+  -tab: string
+  -vehicleType: string
+  -radius: string
+  +renderCitizenViews(): JSX
+  +renderProviderViews(): JSX
+  +renderAdminViews(): JSX
+  +render(): JSX
+}
+
+class AuthContext {
+  -user: AppUser
+  -authLoading: boolean
+  +login(email, password, selectedRole): Promise~Result~
+  +register(name, email, password, role): Promise~Result~
+  +logout(): Promise~void~
+}
+
+class RentalContext {
+  -reservation: Reservation
+  -activeRental: Rental
+  -rentalLoading: boolean
+  -rentalError: string
+  +reserveVehicle(vehicle): Promise~Reservation~
+  +startRental(paymentTxId): Promise~Rental~
+  +endRental(cost): Promise~Rental~
+}
+
+class MobilityService {
+  +fetchVehicles(): Promise~Vehicle[]~
+  +fetchTransitRoutes(): Promise~TransitRoute[]~
+  +fetchParkingSpots(): Promise~ParkingSpot[]~
+  +reserveVehicle(userId, vehicle): Promise~Reservation~
+}
+
+class RecommendationService {
+  +getRecommendations(preferences): Promise~RecommendationResult~
+}
+
+class AdminDashboardService {
+  +getTotalUsers(): Promise~int~
+  +getActiveRentals(): Promise~Rental[]~
+  +getCompletedTripsToday(): Promise~int~
+  +getUsageByVehicleType(): Promise~UsageBreakdown~
+}
+
+class AdminDashboard {
+  -data: DashboardSummary
+  -loading: boolean
+  +loadData(): Promise~void~
+  +manualRefresh(): Promise~void~
+  +render(): JSX
+}
+
+class SupabaseClientSingleton {
+  -instance: SupabaseClient
+  +getInstance(): SupabaseClient
+}
+
+class UsersTable
+class RentalsTable
+class VehiclesTable
+class ParkingSpotsTable
+
+class Vehicle {
+  +id: string
+  +type: string
+  +status: string
+}
+
+class ParkingSpot {
+  +id: string
+  +address: string
+  +available: number
+  +total: number
+}
+
+class Reservation {
+  +id: string
+  +userId: string
+  +vehicleId: string
+  +status: string
+}
+
+class Rental {
+  +id: string
+  +userId: string
+  +vehicleId: string
+  +status: string
+}
+
+class DashboardSummary {
+  +totalUsers: number
+  +activeRentalsCount: number
+  +completedToday: number
+}
+
+App --> Dashboard
+Dashboard --> AuthContext
+Dashboard --> RentalContext
+Dashboard --> MobilityService
+Dashboard --> RecommendationService
+Dashboard --> AdminDashboard
+AdminDashboard --> AdminDashboardService
+
+AuthContext --> SupabaseClientSingleton
+MobilityService --> SupabaseClientSingleton
+RecommendationService --> SupabaseClientSingleton
+AdminDashboardService --> SupabaseClientSingleton
+RentalContext --> MobilityService
+
+SupabaseClientSingleton --> UsersTable
+SupabaseClientSingleton --> RentalsTable
+SupabaseClientSingleton --> VehiclesTable
+SupabaseClientSingleton --> ParkingSpotsTable
+
+Reservation --> Vehicle
+Rental --> Vehicle
+
