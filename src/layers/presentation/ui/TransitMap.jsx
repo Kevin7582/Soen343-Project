@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import MapShell from './maps/MapShell';
-import { toLatLngLiteral, toPath, toPointArray } from './maps/mapUtils';
+import { toLatLngLiteral, toPointArray } from './maps/mapUtils';
 import TransitSearchOverlay from './transit/TransitSearchOverlay';
 import TransitControlsOverlay from './transit/TransitControlsOverlay';
 import TransitMapLayers from './transit/TransitMapLayers';
@@ -19,9 +19,6 @@ function parseDurationToMin(text) {
 }
 
 export default function TransitMap({
-  routes = [],
-  selectedRouteId,
-  onSelectRoute,
   startPoint,
   endPoint,
   onSetStartPoint,
@@ -33,9 +30,6 @@ export default function TransitMap({
   travelMode = 'TRANSIT',
   onSetTravelMode,
   routeInfo,
-  onUseSelectedRouteEndpoints,
-  onPlanSelectedRoute,
-  onPlanTransitFromMap,
   onRouteInfoChange,
 }) {
   const [mapRef, setMapRef] = useState(null);
@@ -45,17 +39,11 @@ export default function TransitMap({
   const [directionsRouteIndex, setDirectionsRouteIndex] = useState(0);
   const [selectedStepIndex, setSelectedStepIndex] = useState(-1);
   const [directionsCollapsed, setDirectionsCollapsed] = useState(false);
-  const [showTrafficLayer, setShowTrafficLayer] = useState(false);
-  const [showTransitLayer, setShowTransitLayer] = useState(false);
   const [compareOptions, setCompareOptions] = useState([]);
   const [compareUpdatedAt, setCompareUpdatedAt] = useState('');
   const [compareSource, setCompareSource] = useState('');
   const [adaptMessage, setAdaptMessage] = useState('');
 
-  const selectedRoute = useMemo(
-    () => routes.find((route) => String(route.id) === String(selectedRouteId)) || null,
-    [routes, selectedRouteId]
-  );
   const placesReady = Boolean(window.google?.maps?.places);
   const emptyWaypoints = useMemo(() => [], []);
   const emptyRoutePreferences = useMemo(() => ({}), []);
@@ -91,54 +79,14 @@ export default function TransitMap({
       }
     }
 
-    if (selectedRoute) {
-      const routePath = toPath(selectedRoute.path);
-      const from = toLatLngLiteral(selectedRoute.fromCoords);
-      const to = toLatLngLiteral(selectedRoute.toCoords);
-
-      if (routePath) {
-        routePath.forEach((point) => bounds.extend(point));
-        mapRef.fitBounds(bounds, 60);
-        return;
-      }
-
-      if (from && to) {
-        bounds.extend(from);
-        bounds.extend(to);
-        mapRef.fitBounds(bounds, 60);
-        return;
-      }
-
-      if (from) {
-        mapRef.panTo(from);
-        mapRef.setZoom(13);
-        return;
-      }
-    }
-
     mapRef.panTo(MONTREAL_CENTER);
     mapRef.setZoom(12);
-  }, [mapRef, selectedRoute, startPoint, endPoint]);
+  }, [mapRef, startPoint, endPoint]);
 
   useEffect(() => {
     setDirectionsRouteIndex(0);
     setSelectedStepIndex(-1);
   }, [directions]);
-
-  useEffect(() => {
-    if (!mapRef || !window.google?.maps) return undefined;
-
-    const trafficLayer = new window.google.maps.TrafficLayer();
-    const transitLayer = new window.google.maps.TransitLayer();
-
-    trafficLayer.setMap(showTrafficLayer ? mapRef : null);
-    transitLayer.setMap(showTransitLayer ? mapRef : null);
-
-    return () => {
-      trafficLayer.setMap(null);
-      transitLayer.setMap(null);
-    };
-  }, [mapRef, showTrafficLayer, showTransitLayer]);
 
   useEffect(() => {
     let active = true;
@@ -264,38 +212,13 @@ export default function TransitMap({
         onPlacePicked={handlePlacePicked}
       />
 
-      <div className="transit-maptools-panel">
-        <button
-          type="button"
-          className={`transit-maptool-btn ${showTrafficLayer ? 'is-active' : ''}`}
-          onClick={() => setShowTrafficLayer((v) => !v)}
-        >
-          Traffic
-        </button>
-        <button
-          type="button"
-          className={`transit-maptool-btn ${showTransitLayer ? 'is-active' : ''}`}
-          onClick={() => setShowTransitLayer((v) => !v)}
-        >
-          Transit
-        </button>
-      </div>
-
       <TransitControlsOverlay
         external
         pickMode={pickMode}
         onSetPickMode={setPickMode}
-        selectedRoute={selectedRoute}
-        onUseSelectedRouteEndpoints={onUseSelectedRouteEndpoints}
-        onPlanSelectedRoute={onPlanSelectedRoute}
-        hasMapRoute={Boolean(startPoint && endPoint)}
-        onPlanTransitFromMap={onPlanTransitFromMap}
         onClear={clearRouteSelection}
         routeInfo={routeInfo}
         travelMode={travelMode}
-        routes={routes}
-        selectedRouteId={selectedRouteId}
-        onSelectRoute={onSelectRoute}
         placesReady={placesReady}
         isRouting={isRouting}
         routingError={routingError}
@@ -318,9 +241,7 @@ export default function TransitMap({
             }}
           >
             <TransitMapLayers
-              routes={routes}
-              selectedRouteId={selectedRouteId}
-              onSelectRoute={onSelectRoute}
+              routes={[]}
               startPoint={startPoint}
               endPoint={endPoint}
               onSetStartPoint={onSetStartPoint}

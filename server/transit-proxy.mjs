@@ -21,8 +21,6 @@ loadDotEnv();
 
 const PORT = Number(process.env.STM_PROXY_PORT || 8090);
 const HOST = process.env.STM_PROXY_HOST || '127.0.0.1';
-const UPSTREAM_URL = process.env.STM_COMPARE_UPSTREAM_URL || '';
-const UPSTREAM_API_KEY = process.env.STM_COMPARE_UPSTREAM_API_KEY || '';
 const GOOGLE_SERVER_KEY = process.env.GOOGLE_MAPS_SERVER_API_KEY || '';
 
 function sendJson(res, status, payload) {
@@ -60,52 +58,6 @@ function reliability(transfers, walkKm) {
   if (transfers <= 1 && walkKm <= 0.6) return 'high';
   if (transfers <= 2 && walkKm <= 1.2) return 'medium';
   return 'low';
-}
-
-function normalizeOptions(payload) {
-  if (Array.isArray(payload?.options)) return payload.options;
-
-  const itineraries = payload?.itineraries || payload?.plan?.itineraries || payload?.data?.plan?.itineraries || [];
-  if (!Array.isArray(itineraries)) return [];
-
-  return itineraries.map((itinerary, index) => {
-    const durationMin = Math.max(1, Math.round(Number(itinerary?.duration || 0) / 60));
-    const walkKm = Number((Number(itinerary?.walkDistance || 0) / 1000).toFixed(2));
-    const transfers = Number(itinerary?.transfers || 0);
-    return {
-      id: `upstream-${index + 1}`,
-      label: `Transit ${index + 1}`,
-      durationMin,
-      walkKm,
-      transfers,
-      reliability: reliability(transfers, walkKm),
-      legs: Array.isArray(itinerary?.legs) ? itinerary.legs : [],
-    };
-  });
-}
-
-async function fetchUpstream(body) {
-  if (!UPSTREAM_URL) return null;
-
-  const headers = { 'Content-Type': 'application/json' };
-  if (UPSTREAM_API_KEY) headers['x-api-key'] = UPSTREAM_API_KEY;
-
-  const res = await fetch(UPSTREAM_URL, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Upstream failed: ${res.status} ${res.statusText}`);
-  }
-
-  const payload = await res.json();
-  return {
-    options: normalizeOptions(payload),
-    updatedAt: payload?.updatedAt || new Date().toISOString(),
-    source: 'upstream',
-  };
 }
 
 async function fetchGoogleFallback(body) {
@@ -198,7 +150,7 @@ async function handleCompare(req, res) {
   }
 
   try {
-    const result = (await fetchUpstream(body)) || (await fetchGoogleFallback(body));
+    const result = await fetchGoogleFallback(body);
     sendJson(res, 200, result);
   } catch (error) {
     sendJson(res, 502, { error: error?.message || 'Transit compare failed' });
@@ -214,7 +166,7 @@ const server = createServer(async (req, res) => {
   if (req.url === '/health') {
     sendJson(res, 200, {
       ok: true,
-      mode: UPSTREAM_URL ? 'upstream' : 'google-fallback',
+      mode: 'google-transit',
       hasGoogleServerKey: Boolean(GOOGLE_SERVER_KEY),
     });
     return;
@@ -230,5 +182,5 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`[transit-proxy] http://${HOST}:${PORT}`);
-  console.log(UPSTREAM_URL ? '[transit-proxy] upstream mode enabled' : '[transit-proxy] using google fallback mode');
+  console.log('[transit-proxy] using google transit compare mode');
 });

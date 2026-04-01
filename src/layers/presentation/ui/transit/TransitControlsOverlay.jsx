@@ -4,17 +4,9 @@ export default function TransitControlsOverlay({
   external = false,
   pickMode,
   onSetPickMode,
-  selectedRoute,
-  onUseSelectedRouteEndpoints,
-  onPlanSelectedRoute,
-  hasMapRoute,
-  onPlanTransitFromMap,
   onClear,
   routeInfo,
   travelMode,
-  routes = [],
-  selectedRouteId,
-  onSelectRoute,
   placesReady,
   isRouting,
   routingError,
@@ -29,15 +21,6 @@ export default function TransitControlsOverlay({
           <button type="button" className={`transit-action-btn ${pickMode === 'end' ? 'is-active' : ''}`} onClick={() => onSetPickMode('end')}>
             End pin
           </button>
-          <button type="button" className="transit-action-btn" disabled={!selectedRoute} onClick={onUseSelectedRouteEndpoints}>
-            Route endpoints
-          </button>
-          <button type="button" className="transit-action-btn is-primary" disabled={!selectedRoute} onClick={onPlanSelectedRoute}>
-            Save selected route
-          </button>
-          <button type="button" className="transit-action-btn is-primary" disabled={!hasMapRoute} onClick={onPlanTransitFromMap}>
-            Save map route
-          </button>
           <button type="button" className="transit-action-btn" onClick={onClear}>
             Clear
           </button>
@@ -50,22 +33,6 @@ export default function TransitControlsOverlay({
         )}
         {isRouting && <div className="transit-info-inline">Calculating route...</div>}
         {!!routingError && <div className="transit-info-inline is-error">{routingError}</div>}
-
-        <div className="transit-route-chips-row">
-          {routes.map((route, index) => {
-            const selected = String(route.id) === String(selectedRouteId);
-            return (
-              <button
-                key={route.id}
-                type="button"
-                className={`transit-route-chip ${selected ? 'is-selected' : ''}`}
-                onClick={() => onSelectRoute?.(route.id)}
-              >
-                Route {index + 1} {route.delay > 0 ? `| +${route.delay}m` : ''}
-              </button>
-            );
-          })}
-        </div>
 
         {!placesReady && (
           <div className="transit-info-inline is-warning">
@@ -84,15 +51,6 @@ export default function TransitControlsOverlay({
         </button>
         <button type="button" className={`transit-action-btn ${pickMode === 'end' ? 'is-active' : ''}`} onClick={() => onSetPickMode('end')}>
           End pin
-        </button>
-        <button type="button" className="transit-action-btn" disabled={!selectedRoute} onClick={onUseSelectedRouteEndpoints}>
-          Route endpoints
-        </button>
-        <button type="button" className="transit-action-btn is-primary" disabled={!selectedRoute} onClick={onPlanSelectedRoute}>
-          Save selected route
-        </button>
-        <button type="button" className="transit-action-btn is-primary" disabled={!hasMapRoute} onClick={onPlanTransitFromMap}>
-          Save map route
         </button>
         <button type="button" className="transit-action-btn" onClick={onClear}>
           Clear
@@ -116,22 +74,6 @@ export default function TransitControlsOverlay({
           {routingError}
         </div>
       )}
-
-      <div className="transit-overlay transit-overlay-bottom">
-        {routes.map((route, index) => {
-          const selected = String(route.id) === String(selectedRouteId);
-          return (
-            <button
-              key={route.id}
-              type="button"
-              className={`transit-route-chip ${selected ? 'is-selected' : ''}`}
-              onClick={() => onSelectRoute?.(route.id)}
-            >
-              Route {index + 1} {route.delay > 0 ? `| +${route.delay}m` : ''}
-            </button>
-          );
-        })}
-      </div>
 
       {!placesReady && (
         <div className="transit-overlay transit-overlay-warning">

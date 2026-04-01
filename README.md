@@ -75,13 +75,6 @@ Start a second terminal for the transit proxy:
 npm run transit:proxy
 ```
 
-Optional backend passthrough (only if you have your own API):
-
-```bash
-STM_COMPARE_UPSTREAM_URL=https://your-backend/transit/compare
-STM_COMPARE_UPSTREAM_API_KEY=your_backend_api_key
-```
-
 Detailed setup is in [docs/TRANSIT_SETUP.md](docs/TRANSIT_SETUP.md).
 
 ## Map Architecture (Team Rule)

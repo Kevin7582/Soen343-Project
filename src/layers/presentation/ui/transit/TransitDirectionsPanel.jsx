@@ -88,17 +88,19 @@ export default function TransitDirectionsPanel({
             </div>
           </div>
 
-          <div className="transit-directions-card">
-            <h4>Live transit refresh</h4>
-            <p>{compareUpdatedAt ? `Last refresh: ${new Date(compareUpdatedAt).toLocaleTimeString()}` : 'No live refresh yet.'}</p>
-            {compareSource ? <p>Source: {compareSource}</p> : null}
-            {adaptMessage ? <p>{adaptMessage}</p> : null}
-            {compareOptions.slice(0, 3).map((option) => (
-              <p key={option.id}>
-                {option.label}: {option.durationMin} min | Walk {option.walkKm} km | Transfers {option.transfers}
-              </p>
-            ))}
-          </div>
+          {(compareOptions.length > 0 || adaptMessage) && (
+            <div className="transit-directions-card">
+              <h4>Live transit refresh</h4>
+              {compareUpdatedAt ? <p>Last refresh: {new Date(compareUpdatedAt).toLocaleTimeString()}</p> : null}
+              {compareSource ? <p>Source: {compareSource}</p> : null}
+              {adaptMessage ? <p>{adaptMessage}</p> : null}
+              {compareOptions.slice(0, 3).map((option) => (
+                <p key={option.id}>
+                  {option.label}: {option.durationMin} min | Walk {option.walkKm} km | Transfers {option.transfers}
+                </p>
+              ))}
+            </div>
+          )}
         </>
       )}
     </div>

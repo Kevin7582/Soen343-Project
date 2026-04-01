@@ -134,7 +134,7 @@ export async function fetchTransitCompare({
     return {
       options: normalizeProxyOptions(payload?.options),
       updatedAt: payload?.updatedAt || new Date().toISOString(),
-      source: payload?.source || 'stm-proxy',
+      source: payload?.source || 'google-proxy',
     };
   }
 
