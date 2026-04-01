@@ -640,70 +640,67 @@ function CitizenViews({
 
       {tab === 'transit' && (
         <Section title="Transit" subtitle="Map-first trip planning workspace">
-          <div className="transit-workspace">
-            <div className="transit-stage">
-              <TransitMap
-                routes={transitRoutes}
-                selectedRouteId={selectedTransitRoute?.id}
-                onSelectRoute={onSelectTransitRoute}
-                startPoint={transitStartPoint}
-                endPoint={transitEndPoint}
-                onSetStartPoint={onSetTransitStartPoint}
-                onSetEndPoint={onSetTransitEndPoint}
-                transitFrom={transitFrom}
-                transitTo={transitTo}
-                onSetTransitFrom={setTransitFrom}
-                onSetTransitTo={setTransitTo}
-                travelMode={transitTravelMode}
-                onSetTravelMode={onSetTransitTravelMode}
-                routeInfo={transitRouteInfo}
-                onUseSelectedRouteEndpoints={onUseSelectedRouteEndpoints}
-                onPlanSelectedRoute={() => selectedTransitRoute && onPlanTransit(selectedTransitRoute)}
-                onPlanTransitFromMap={onPlanTransitFromMap}
-                onRouteInfoChange={onTransitRouteInfoChange}
-              />
+          <div className="transit-stage">
+            <TransitMap
+              routes={transitRoutes}
+              selectedRouteId={selectedTransitRoute?.id}
+              onSelectRoute={onSelectTransitRoute}
+              startPoint={transitStartPoint}
+              endPoint={transitEndPoint}
+              onSetStartPoint={onSetTransitStartPoint}
+              onSetEndPoint={onSetTransitEndPoint}
+              transitFrom={transitFrom}
+              transitTo={transitTo}
+              onSetTransitFrom={setTransitFrom}
+              onSetTransitTo={setTransitTo}
+              travelMode={transitTravelMode}
+              onSetTravelMode={onSetTransitTravelMode}
+              routeInfo={transitRouteInfo}
+              onUseSelectedRouteEndpoints={onUseSelectedRouteEndpoints}
+              onPlanSelectedRoute={() => selectedTransitRoute && onPlanTransit(selectedTransitRoute)}
+              onPlanTransitFromMap={onPlanTransitFromMap}
+              onRouteInfoChange={onTransitRouteInfoChange}
+            />
+          </div>
+
+          <div className="transit-summary-grid">
+            <div className="transit-summary-card">
+              <h3>Selected route</h3>
+              {selectedTransitRoute ? (
+                <>
+                  <p className="transit-route-line">{selectedTransitRoute.line}</p>
+                  <p>{selectedTransitRoute.from} {'->'} {selectedTransitRoute.to}</p>
+                  <p>Next departure: {selectedTransitRoute.nextDeparture}</p>
+                  <p>Delay: {selectedTransitRoute.delay} min</p>
+                </>
+              ) : (
+                <p>Click any route chip to preview details.</p>
+              )}
             </div>
 
-            <aside className="transit-sidepanel">
-              <div className="transit-sidepanel-section">
-                <h3>Selected route</h3>
-                {selectedTransitRoute ? (
-                  <>
-                    <p className="transit-route-line">{selectedTransitRoute.line}</p>
-                    <p>{selectedTransitRoute.from} {'->'} {selectedTransitRoute.to}</p>
-                    <p>Next departure: {selectedTransitRoute.nextDeparture}</p>
-                    <p>Delay: {selectedTransitRoute.delay} min</p>
-                  </>
-                ) : (
-                  <p>Click any route on the map to preview details.</p>
-                )}
-              </div>
+            <div className="transit-summary-card">
+              <h3>Live preview</h3>
+              {transitRouteInfo ? (
+                <p>{transitRouteInfo.distanceText || 'N/A'} in {transitRouteInfo.durationText || 'N/A'} ({transitTravelMode.toLowerCase()})</p>
+              ) : (
+                <p>Set start and end points to preview trip duration.</p>
+              )}
+            </div>
 
-              <div className="transit-sidepanel-section">
-                <h3>Live preview</h3>
-                {transitRouteInfo ? (
-                  <p>{transitRouteInfo.distanceText || 'N/A'} in {transitRouteInfo.durationText || 'N/A'} ({transitTravelMode.toLowerCase()})</p>
-                ) : (
-                  <p>Set start and end points to preview trip duration.</p>
-                )}
-              </div>
-
-              <div className="transit-sidepanel-section">
-                <h3>Recent plans</h3>
-                {transitPlans.length === 0 && <p>No transit plans saved yet.</p>}
-                {transitPlans.length > 0 && (
-                  <div className="transit-plans-list">
-                    {transitPlans.slice(0, 6).map((plan) => (
-                      <div key={plan.id} className="transit-plan-row">
-                        <p><strong>{plan.from}</strong> {'->'} <strong>{plan.to}</strong></p>
-                        <p>{plan.notes || `Route #${plan.routeId}`}</p>
-                        <p>{new Date(plan.plannedAt).toLocaleString()}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </aside>
+            <div className="transit-summary-card">
+              <h3>Recent plans</h3>
+              {transitPlans.length === 0 && <p>No transit plans saved yet.</p>}
+              {transitPlans.length > 0 && (
+                <div className="transit-plans-list">
+                  {transitPlans.slice(0, 4).map((plan) => (
+                    <div key={plan.id} className="transit-plan-row">
+                      <p><strong>{plan.from}</strong> {'->'} <strong>{plan.to}</strong></p>
+                      <p>{plan.notes || `Route #${plan.routeId}`}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </Section>
       )}

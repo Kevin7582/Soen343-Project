@@ -247,6 +247,32 @@ label {
   min-width: 0;
 }
 
+.transit-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.transit-summary-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.78);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.transit-summary-card h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--primary);
+}
+
+.transit-summary-card p {
+  margin: 0;
+  color: var(--text-muted);
+}
+
 .transit-root {
   display: grid;
   gap: 10px;
@@ -756,6 +782,10 @@ label {
   }
 
   .transit-main-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .transit-summary-grid {
     grid-template-columns: 1fr;
   }
 
