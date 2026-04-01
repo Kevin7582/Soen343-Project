@@ -24,6 +24,8 @@ Create a `.env` file with:
 VITE_SUPABASE_URL=your_supabase_project_url
 VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY=your_supabase_publishable_key
 VITE_GOOGLE_MAPS_API_KEY=your_google_maps_api_key
+VITE_STM_PROXY_URL=http://localhost:8090
+GOOGLE_MAPS_SERVER_API_KEY=your_google_maps_server_key
 ```
 
 ## Google Maps Setup (Transit)
@@ -64,6 +66,16 @@ npm run dev
 ```
 
 If Transit page shows `Missing Google Maps key`, your `.env` is missing `VITE_GOOGLE_MAPS_API_KEY` or the dev server was not restarted.
+
+## Transit Compare Proxy
+
+Start a second terminal for the transit proxy:
+
+```bash
+npm run transit:proxy
+```
+
+Detailed setup is in [docs/TRANSIT_SETUP.md](docs/TRANSIT_SETUP.md).
 
 ## Map Architecture (Team Rule)
 

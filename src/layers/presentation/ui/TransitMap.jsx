@@ -1,36 +1,24 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Autocomplete, DirectionsRenderer, MarkerF, PolylineF } from '@react-google-maps/api';
-import { fetchDirectionsPath } from '../../service-layer/maps/mapRoutingService';
+import React, { useEffect, useMemo, useState } from 'react';
 import MapShell from './maps/MapShell';
-import { toLatLngLiteral, toPath, toPointArray } from './maps/mapUtils';
+import { toLatLngLiteral, toPointArray } from './maps/mapUtils';
+import TransitSearchOverlay from './transit/TransitSearchOverlay';
+import TransitControlsOverlay from './transit/TransitControlsOverlay';
+import TransitMapLayers from './transit/TransitMapLayers';
+import TransitDirectionsPanel from './transit/TransitDirectionsPanel';
+import useTransitRouting from './transit/useTransitRouting';
+import { MAP_CONTAINER_STYLE, MONTREAL_CENTER } from './transit/transitConstants';
+import { fetchTransitCompare } from '../../service-layer/transit/transitCompareService';
 
-const MONTREAL_CENTER = { lat: 45.5017, lng: -73.5673 };
-const MAP_CONTAINER_STYLE = {
-  width: '100%',
-  height: '420px',
-};
-
-function routeColor(isSelected) {
-  return isSelected ? '#38bdf8' : '#64748b';
-}
-
-function toTravelMode(mode) {
-  if (!window.google?.maps?.TravelMode) return null;
-  return window.google.maps.TravelMode[mode] || window.google.maps.TravelMode.TRANSIT;
-}
-
-function parseDurationAndDistance(directionsResult) {
-  const leg = directionsResult?.routes?.[0]?.legs?.[0];
-  return {
-    distanceText: leg?.distance?.text || '',
-    durationText: leg?.duration?.text || '',
-  };
+function parseDurationToMin(text) {
+  const value = String(text || '');
+  const hoursMatch = value.match(/(\d+)\s*hour/);
+  const minMatch = value.match(/(\d+)\s*min/);
+  const hours = hoursMatch ? Number(hoursMatch[1]) : 0;
+  const mins = minMatch ? Number(minMatch[1]) : 0;
+  return hours * 60 + mins;
 }
 
 export default function TransitMap({
-  routes = [],
-  selectedRouteId,
-  onSelectRoute,
   startPoint,
   endPoint,
   onSetStartPoint,
@@ -40,60 +28,40 @@ export default function TransitMap({
   onSetTransitFrom,
   onSetTransitTo,
   travelMode = 'TRANSIT',
+  onSetTravelMode,
+  routeInfo,
   onRouteInfoChange,
 }) {
   const [mapRef, setMapRef] = useState(null);
-  const [pathPreview, setPathPreview] = useState(null);
   const [pickMode, setPickMode] = useState('start');
-  const [directions, setDirections] = useState(null);
+  const [plannerMode, setPlannerMode] = useState('depart_now');
+  const [plannedDateTime, setPlannedDateTime] = useState('');
+  const [directionsRouteIndex, setDirectionsRouteIndex] = useState(0);
+  const [selectedStepIndex, setSelectedStepIndex] = useState(-1);
+  const [directionsCollapsed, setDirectionsCollapsed] = useState(false);
+  const [compareOptions, setCompareOptions] = useState([]);
+  const [compareUpdatedAt, setCompareUpdatedAt] = useState('');
+  const [compareSource, setCompareSource] = useState('');
+  const [adaptMessage, setAdaptMessage] = useState('');
 
-  const fromAutocompleteRef = useRef(null);
-  const toAutocompleteRef = useRef(null);
-
-  const selectedRoute = useMemo(
-    () => routes.find((route) => String(route.id) === String(selectedRouteId)) || null,
-    [routes, selectedRouteId]
-  );
   const placesReady = Boolean(window.google?.maps?.places);
+  const emptyWaypoints = useMemo(() => [], []);
+  const emptyRoutePreferences = useMemo(() => ({}), []);
 
-  useEffect(() => {
-    let mounted = true;
-    async function computePreview() {
-      if (!startPoint || !endPoint) {
-        setPathPreview(null);
-        setDirections(null);
-        onRouteInfoChange?.(null);
-        return;
-      }
-
-      const routePath = await fetchDirectionsPath(startPoint, endPoint, [travelMode, 'TRANSIT', 'DRIVING']);
-      if (!mounted) return;
-      setPathPreview(routePath);
-
-      if (!window.google?.maps) return;
-      const service = new window.google.maps.DirectionsService();
-      const mode = toTravelMode(travelMode);
-      const origin = toLatLngLiteral(startPoint);
-      const destination = toLatLngLiteral(endPoint);
-      if (!mode || !origin || !destination) return;
-
-      service.route({ origin, destination, travelMode: mode }, (result, status) => {
-        if (!mounted) return;
-        if (status === 'OK' && result) {
-          setDirections(result);
-          onRouteInfoChange?.(parseDurationAndDistance(result));
-        } else {
-          setDirections(null);
-          onRouteInfoChange?.(null);
-        }
-      });
-    }
-
-    computePreview();
-    return () => {
-      mounted = false;
-    };
-  }, [startPoint, endPoint, travelMode, onRouteInfoChange]);
+  const {
+    directions,
+    isRouting,
+    routingError,
+  } = useTransitRouting({
+    startPoint,
+    endPoint,
+    waypoints: emptyWaypoints,
+    travelMode,
+    plannerMode,
+    plannedDateTime,
+    routePreferences: emptyRoutePreferences,
+    onRouteInfoChange,
+  });
 
   useEffect(() => {
     if (!mapRef || !window.google?.maps) return;
@@ -111,34 +79,67 @@ export default function TransitMap({
       }
     }
 
-    if (selectedRoute) {
-      const routePath = toPath(selectedRoute.path);
-      const from = toLatLngLiteral(selectedRoute.fromCoords);
-      const to = toLatLngLiteral(selectedRoute.toCoords);
+    mapRef.panTo(MONTREAL_CENTER);
+    mapRef.setZoom(12);
+  }, [mapRef, startPoint, endPoint]);
 
-      if (routePath) {
-        routePath.forEach((point) => bounds.extend(point));
-        mapRef.fitBounds(bounds, 60);
+  useEffect(() => {
+    setDirectionsRouteIndex(0);
+    setSelectedStepIndex(-1);
+  }, [directions]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function refreshCompare() {
+      if (!startPoint || !endPoint) {
+        if (active) {
+          setCompareOptions([]);
+          setCompareUpdatedAt('');
+          setCompareSource('');
+          setAdaptMessage('');
+        }
         return;
       }
 
-      if (from && to) {
-        bounds.extend(from);
-        bounds.extend(to);
-        mapRef.fitBounds(bounds, 60);
-        return;
-      }
+      try {
+        const result = await fetchTransitCompare({
+          startPoint,
+          endPoint,
+          plannedDateTime,
+          plannerMode,
+          numItineraries: 4,
+        });
+        if (!active || !result) return;
 
-      if (from) {
-        mapRef.panTo(from);
-        mapRef.setZoom(13);
-        return;
+        setCompareOptions(result.options || []);
+        setCompareUpdatedAt(result.updatedAt || new Date().toISOString());
+        setCompareSource(result.source || '');
+
+        const googleMin = parseDurationToMin(routeInfo?.durationText || '');
+        const best = (result.options || []).reduce(
+          (prev, item) => (!prev || item.durationMin < prev.durationMin ? item : prev),
+          null
+        );
+        if (best && googleMin > 0 && best.durationMin + 5 < googleMin) {
+          setAdaptMessage(`Faster transit option detected (${best.durationMin} min). Consider rerouting.`);
+        } else {
+          setAdaptMessage('');
+        }
+      } catch {
+        if (active) {
+          setAdaptMessage('');
+        }
       }
     }
 
-    mapRef.panTo(MONTREAL_CENTER);
-    mapRef.setZoom(12);
-  }, [mapRef, selectedRoute, startPoint, endPoint]);
+    refreshCompare();
+    const timer = setInterval(refreshCompare, 45000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [startPoint, endPoint, plannedDateTime, plannerMode, routeInfo?.durationText]);
 
   const onMapClick = (event) => {
     const point = toPointArray(event?.latLng);
@@ -154,19 +155,14 @@ export default function TransitMap({
     setPickMode('start');
   };
 
-  const applyPlaceSelection = (autocomplete, type) => {
-    const place = autocomplete?.getPlace?.();
-    const location = place?.geometry?.location;
-    if (!location) return;
-
-    const point = [Number(location.lat().toFixed(6)), Number(location.lng().toFixed(6))];
-
+  const handlePlacePicked = (type, point, label) => {
+    if (!point) return;
     if (type === 'from') {
       onSetStartPoint?.(point);
-      onSetTransitFrom?.(place.formatted_address || place.name || transitFrom);
+      onSetTransitFrom?.(label || transitFrom);
     } else {
       onSetEndPoint?.(point);
-      onSetTransitTo?.(place.formatted_address || place.name || transitTo);
+      onSetTransitTo?.(label || transitTo);
     }
 
     if (mapRef) {
@@ -175,185 +171,104 @@ export default function TransitMap({
     }
   };
 
-  const startMarker = toLatLngLiteral(startPoint);
-  const endMarker = toLatLngLiteral(endPoint);
+  const clearRouteSelection = () => {
+    onSetStartPoint?.(null);
+    onSetEndPoint?.(null);
+    onRouteInfoChange?.(null);
+    setSelectedStepIndex(-1);
+  };
+
+  const swapLocations = () => {
+    const prevFrom = transitFrom;
+    const prevTo = transitTo;
+    const prevStart = startPoint;
+    const prevEnd = endPoint;
+    onSetTransitFrom?.(prevTo);
+    onSetTransitTo?.(prevFrom);
+    onSetStartPoint?.(prevEnd);
+    onSetEndPoint?.(prevStart);
+  };
+
+  const handleSelectStep = (index, step) => {
+    setSelectedStepIndex(index);
+  };
 
   return (
-    <div className="transit-map-wrap stack-8">
-      <div className="transit-map-toolbar stack-8">
-        <p>
-          Click map to set: <strong>{pickMode === 'start' ? 'Start point' : 'End point'}</strong>
-        </p>
+    <div className="transit-root">
+      <TransitSearchOverlay
+        external
+        placesReady={placesReady}
+        transitFrom={transitFrom}
+        transitTo={transitTo}
+        onSetTransitFrom={onSetTransitFrom}
+        onSetTransitTo={onSetTransitTo}
+        onSwapLocations={swapLocations}
+        travelMode={travelMode}
+        onSetTravelMode={onSetTravelMode}
+        plannerMode={plannerMode}
+        onSetPlannerMode={setPlannerMode}
+        plannedDateTime={plannedDateTime}
+        onSetPlannedDateTime={setPlannedDateTime}
+        onPlacePicked={handlePlacePicked}
+      />
 
-        {placesReady ? (
-          <div className="row wrap gap-8">
-            <Autocomplete onLoad={(ref) => { fromAutocompleteRef.current = ref; }} onPlaceChanged={() => applyPlaceSelection(fromAutocompleteRef.current, 'from')}>
-              <input value={transitFrom} onChange={(e) => onSetTransitFrom?.(e.target.value)} placeholder="Search start location" style={{ minWidth: 250 }} />
-            </Autocomplete>
-            <Autocomplete onLoad={(ref) => { toAutocompleteRef.current = ref; }} onPlaceChanged={() => applyPlaceSelection(toAutocompleteRef.current, 'to')}>
-              <input value={transitTo} onChange={(e) => onSetTransitTo?.(e.target.value)} placeholder="Search destination" style={{ minWidth: 250 }} />
-            </Autocomplete>
-          </div>
-        ) : (
-          <div className="stack-8">
-            <div className="row wrap gap-8">
-              <input value={transitFrom} onChange={(e) => onSetTransitFrom?.(e.target.value)} placeholder="Start location (autocomplete unavailable)" style={{ minWidth: 250 }} />
-              <input value={transitTo} onChange={(e) => onSetTransitTo?.(e.target.value)} placeholder="Destination (autocomplete unavailable)" style={{ minWidth: 250 }} />
-            </div>
-            <p style={{ color: 'var(--warning)', margin: 0 }}>
-              Places autocomplete unavailable. Enable Places API for this key/project or check key restrictions.
-            </p>
-          </div>
-        )}
+      <TransitControlsOverlay
+        external
+        pickMode={pickMode}
+        onSetPickMode={setPickMode}
+        onClear={clearRouteSelection}
+        routeInfo={routeInfo}
+        travelMode={travelMode}
+        placesReady={placesReady}
+        isRouting={isRouting}
+        routingError={routingError}
+      />
 
-        <div className="row wrap gap-8">
-          <button type="button" className={`btn ${pickMode === 'start' ? 'btn-primary-soft' : 'btn-soft'}`} onClick={() => setPickMode('start')}>
-            Pick start
-          </button>
-          <button type="button" className={`btn ${pickMode === 'end' ? 'btn-primary-soft' : 'btn-soft'}`} onClick={() => setPickMode('end')}>
-            Pick end
-          </button>
-          <button
-            type="button"
-            className="btn btn-soft"
-            onClick={() => {
-              onSetStartPoint?.(null);
-              onSetEndPoint?.(null);
-              setDirections(null);
-              onRouteInfoChange?.(null);
+      <div className="transit-main-layout">
+        <div className="transit-map-shell">
+          <MapShell
+            mapContainerStyle={MAP_CONTAINER_STYLE}
+            center={MONTREAL_CENTER}
+            zoom={12}
+            onLoad={setMapRef}
+            onUnmount={() => setMapRef(null)}
+            onClick={onMapClick}
+            options={{
+              mapTypeControl: true,
+              fullscreenControl: true,
+              streetViewControl: true,
+              zoomControl: true,
             }}
           >
-            Clear map route
-          </button>
-        </div>
-      </div>
-
-      <MapShell
-        mapContainerStyle={MAP_CONTAINER_STYLE}
-        center={MONTREAL_CENTER}
-        zoom={12}
-        onLoad={setMapRef}
-        onUnmount={() => setMapRef(null)}
-        onClick={onMapClick}
-      >
-        {routes.map((route) => {
-          const isSelected = String(route.id) === String(selectedRouteId);
-          const path = toPath(route.path);
-          const from = toLatLngLiteral(route.fromCoords);
-          const to = toLatLngLiteral(route.toCoords);
-
-          if (!path && !from && !to) return null;
-
-          return (
-            <React.Fragment key={route.id}>
-              {path ? (
-                <PolylineF
-                  path={path}
-                  options={{
-                    strokeColor: routeColor(isSelected),
-                    strokeOpacity: isSelected ? 0.95 : 0.6,
-                    strokeWeight: isSelected ? 5 : 3,
-                  }}
-                  onClick={() => onSelectRoute?.(route.id)}
-                />
-              ) : (
-                from &&
-                to && (
-                  <PolylineF
-                    path={[from, to]}
-                    options={{
-                      strokeColor: routeColor(isSelected),
-                      strokeOpacity: isSelected ? 0.95 : 0.6,
-                      strokeWeight: isSelected ? 5 : 3,
-                    }}
-                    onClick={() => onSelectRoute?.(route.id)}
-                  />
-                )
-              )}
-
-              {from && (
-                <MarkerF
-                  position={from}
-                  onClick={() => onSelectRoute?.(route.id)}
-                  title={`${route.line}: ${route.from}`}
-                />
-              )}
-              {to && (
-                <MarkerF
-                  position={to}
-                  onClick={() => onSelectRoute?.(route.id)}
-                  title={`${route.line}: ${route.to}`}
-                />
-              )}
-            </React.Fragment>
-          );
-        })}
-
-        {startMarker && (
-          <MarkerF
-            position={startMarker}
-            draggable
-            label="S"
-            onDragEnd={(event) => {
-              const point = toPointArray(event?.latLng);
-              if (point) onSetStartPoint?.(point);
-            }}
-            title="Trip start"
-          />
-        )}
-        {endMarker && (
-          <MarkerF
-            position={endMarker}
-            draggable
-            label="E"
-            onDragEnd={(event) => {
-              const point = toPointArray(event?.latLng);
-              if (point) onSetEndPoint?.(point);
-            }}
-            title="Trip end"
-          />
-        )}
-
-        {directions ? (
-          <DirectionsRenderer
-            directions={directions}
-            options={{
-              preserveViewport: true,
-              suppressMarkers: true,
-              polylineOptions: {
-                strokeColor: '#22c55e',
-                strokeOpacity: 0.95,
-                strokeWeight: 5,
-              },
-            }}
-          />
-        ) : (
-          startMarker &&
-          endMarker && (
-            <PolylineF
-              path={pathPreview || [startMarker, endMarker]}
-              options={{
-                strokeColor: '#22c55e',
-                strokeOpacity: 0.9,
-                strokeWeight: 5,
-                icons: pathPreview
-                  ? []
-                  : [
-                      {
-                        icon: {
-                          path: 'M 0,-1 0,1',
-                          strokeOpacity: 1,
-                          scale: 4,
-                        },
-                        offset: '0',
-                        repeat: '16px',
-                      },
-                    ],
-              }}
+            <TransitMapLayers
+              routes={[]}
+              startPoint={startPoint}
+              endPoint={endPoint}
+              onSetStartPoint={onSetStartPoint}
+              onSetEndPoint={onSetEndPoint}
+              directions={directions}
+              directionsRouteIndex={directionsRouteIndex}
+              waypoints={emptyWaypoints}
+              poiResults={emptyWaypoints}
             />
-          )
-        )}
-      </MapShell>
+          </MapShell>
+        </div>
+
+        <TransitDirectionsPanel
+          external
+          directions={directions}
+          routeIndex={directionsRouteIndex}
+          onSetRouteIndex={setDirectionsRouteIndex}
+          selectedStepIndex={selectedStepIndex}
+          onSelectStep={handleSelectStep}
+          isCollapsed={directionsCollapsed}
+          onToggleCollapsed={() => setDirectionsCollapsed((v) => !v)}
+          compareOptions={compareOptions}
+          compareUpdatedAt={compareUpdatedAt}
+          compareSource={compareSource}
+          adaptMessage={adaptMessage}
+        />
+      </div>
     </div>
   );
 }
