@@ -1,27 +1,16 @@
 import { createServer } from 'node:http';
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
 
-function loadDotEnv() {
-  const envPath = resolve(process.cwd(), '.env');
-  if (!existsSync(envPath)) return;
-  const raw = readFileSync(envPath, 'utf8');
-  raw.split(/\r?\n/).forEach((line) => {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) return;
-    const idx = trimmed.indexOf('=');
-    if (idx <= 0) return;
-    const key = trimmed.slice(0, idx).trim();
-    const val = trimmed.slice(idx + 1).trim().replace(/^"|"$/g, '');
-    if (!process.env[key]) process.env[key] = val;
-  });
-}
-
-loadDotEnv();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+dotenv.config({ path: resolve(__dirname, '../.env') });
 
 const PORT = Number(process.env.STM_PROXY_PORT || 8090);
 const HOST = process.env.STM_PROXY_HOST || '127.0.0.1';
 const GOOGLE_SERVER_KEY = process.env.GOOGLE_MAPS_SERVER_API_KEY || '';
+const STM_API_KEY = (process.env.STM_API_KEY || '').trim();
 
 function sendJson(res, status, payload) {
   res.writeHead(status, {
@@ -157,6 +146,28 @@ async function handleCompare(req, res) {
   }
 }
 
+async function handleStmStatus(_req, res) {
+  if (!STM_API_KEY) {
+    sendJson(res, 500, { error: 'STM_API_KEY is not configured' });
+    return;
+  }
+  try {
+    const stmRes = await fetch('https://api.stm.info/pub/od/i3/v2/messages/etatservice', {
+      headers: { apiKey: STM_API_KEY },
+    });
+    if (!stmRes.ok) {
+      const text = await stmRes.text();
+      console.error("STM ERROR:", stmRes.status, text);
+      sendJson(res, 502, { error: text });
+      return;
+    }
+    const data = await stmRes.json();
+    sendJson(res, 200, data);
+  } catch (err) {
+    sendJson(res, 502, { error: err?.message || 'STM fetch failed' });
+  }
+}
+
 const server = createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     sendJson(res, 200, { ok: true });
@@ -174,6 +185,11 @@ const server = createServer(async (req, res) => {
 
   if (req.url === '/transit/compare' && req.method === 'POST') {
     await handleCompare(req, res);
+    return;
+  }
+
+  if (req.url === '/stm/status' && req.method === 'GET') {
+    await handleStmStatus(req, res);
     return;
   }
 
