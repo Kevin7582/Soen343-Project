@@ -89,7 +89,7 @@ function AuthScreen() {
       setSubmitting(true);
 
       if (mode === 'login') {
-        await login(email.trim(), password, role);
+        await login(email.trim(), password);
       } else {
         const proceed = window.confirm('Create a new account with these values?');
         if (!proceed) return;
@@ -119,11 +119,8 @@ function AuthScreen() {
 
   const toggleMode = () => {
     clearFormError();
-    setMode((prev) => {
-      const next = prev === 'login' ? 'register' : 'login';
-      if (next === 'register' && role === ROLES.ADMIN) setRole(ROLES.CITIZEN);
-      return next;
-    });
+    setRole(ROLES.CITIZEN);
+    setMode((prev) => (prev === 'login' ? 'register' : 'login'));
   };
 
   const isRegisterMode = mode === 'register';
@@ -146,16 +143,15 @@ function AuthScreen() {
           <label>Email<input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" type="text" /></label>
           <label>Password<input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter password" type="password" /></label>
 
-          <div>
-            <label>I am a...</label>
-            <div className="role-row" style={{ marginTop: 8, gridTemplateColumns: isRegisterMode ? '1fr 1fr' : 'repeat(3, 1fr)' }}>
-              <RoleButton label="Citizen" active={role === ROLES.CITIZEN} onClick={() => setRole(ROLES.CITIZEN)} />
-              <RoleButton label="Provider" active={role === ROLES.MOBILITY_PROVIDER} onClick={() => setRole(ROLES.MOBILITY_PROVIDER)} />
-              {!isRegisterMode && (
-                <RoleButton label="Admin" active={role === ROLES.ADMIN} onClick={() => setRole(ROLES.ADMIN)} />
-              )}
+          {isRegisterMode && (
+            <div>
+              <label>I am a...</label>
+              <div className="role-row" style={{ marginTop: 8, gridTemplateColumns: '1fr 1fr' }}>
+                <RoleButton label="Citizen" active={role === ROLES.CITIZEN} onClick={() => setRole(ROLES.CITIZEN)} />
+                <RoleButton label="Provider" active={role === ROLES.MOBILITY_PROVIDER} onClick={() => setRole(ROLES.MOBILITY_PROVIDER)} />
+              </div>
             </div>
-          </div>
+          )}
 
           {!!formError && <div className="auth-error">{formError}</div>}
 
@@ -1369,16 +1365,16 @@ function AnalyticsPage({ vehiclesData, parkingSpots }) {
           {/* Key Metrics */}
           <div className="stat-row fade-up">
             <div className="stat-badge">
-              <div className="stat-badge-value">{rentalStats.total}</div>
-              <div className="stat-badge-label">Total Rentals</div>
+              <div className="stat-badge-value">{rentalStats.completed}</div>
+              <div className="stat-badge-label">Completed Trips</div>
             </div>
             <div className="stat-badge">
               <div className="stat-badge-value">{rentalStats.active}</div>
               <div className="stat-badge-label">Active Now</div>
             </div>
             <div className="stat-badge">
-              <div className="stat-badge-value">${rentalStats.revenue.toFixed(2)}</div>
-              <div className="stat-badge-label">Revenue</div>
+              <div className="stat-badge-value">{availableVehicles}</div>
+              <div className="stat-badge-label">Vehicles Available</div>
             </div>
             <div className="stat-badge">
               <div className="stat-badge-value">{bixiStats?.totalStations ?? 0}</div>
@@ -1754,6 +1750,13 @@ function ProviderVehicles({ initialVehicles = [] }) {
     </Section>
   );
 }
+function formatRentalDate(raw) {
+  if (!raw || raw === 'N/A') return 'N/A';
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+}
+
 function ProviderRentalData({ rentals = [] }) {
   return (
     <Section title="Rental records" subtitle="Manage and view rental data">
@@ -1761,7 +1764,11 @@ function ProviderRentalData({ rentals = [] }) {
 
       <div className="grid-2">
         {rentals.map((record) => (
-          <Card key={record.id} title={record.vehicle} text={`${record.user} | ${record.start} -> ${record.end} | $${record.cost}`} />
+          <Card
+            key={record.id}
+            title={record.vehicle}
+            text={`${record.user} — ${formatRentalDate(record.start)} → ${formatRentalDate(record.end)} — $${record.cost.toFixed(2)}`}
+          />
         ))}
       </div>
     </Section>

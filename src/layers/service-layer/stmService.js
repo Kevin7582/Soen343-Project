@@ -1,7 +1,8 @@
 // STM Service Status
-// Fetches metro/bus service status from STM API via local proxy
+// Fetches metro service status directly from STM API
 
-const PROXY_BASE = import.meta.env.VITE_STM_PROXY_URL || 'http://localhost:8090';
+const STM_API_KEY = import.meta.env.VITE_STM_API_KEY || '';
+const STM_API_URL = 'https://api.stm.info/pub/od/i3/v2/messages/etatservice';
 
 let cache = { data: null, timestamp: 0 };
 const CACHE_TTL = 60_000; // 60 seconds
@@ -21,8 +22,10 @@ export async function fetchStmStatus() {
   }
 
   try {
-    const res = await fetch(`${PROXY_BASE}/stm/status`);
-    if (!res.ok) throw new Error(`Proxy returned ${res.status}`);
+    const res = await fetch(STM_API_URL, {
+      headers: { apiKey: STM_API_KEY },
+    });
+    if (!res.ok) throw new Error(`STM API returned ${res.status}`);
     const raw = await res.json();
 
     const parsed = parseStmResponse(raw);
@@ -36,7 +39,6 @@ export async function fetchStmStatus() {
 
 function parseStmResponse(raw) {
   // STM etatservice returns service messages/alerts
-  // Structure varies but typically has an array of messages per line
   const messages = Array.isArray(raw) ? raw : raw?.result || raw?.messages || raw?.data || [];
 
   const lineStatuses = Object.entries(METRO_LINES).map(([id, info]) => {
