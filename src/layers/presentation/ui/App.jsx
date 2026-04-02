@@ -889,12 +889,14 @@ function Card({ title, text, action }) {
 function ProviderVehicles({ initialVehicles = [] }) {
   const [vehicles, setVehicles] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({ type: '', location: '', rate_per_min: '' });
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [addForm, setAddForm] = useState({ type: 'scooter', location: '', rate_per_min: '0.25' });
 
   useEffect(() => {
     async function load() {
-      const { data, error } = await supabase
-        .from('vehicles')
-        .select('*');
+      const { data, error } = await supabase.from('vehicles').select('*');
       if (!error && data) {
         setVehicles(data);
       } else {
@@ -906,50 +908,57 @@ function ProviderVehicles({ initialVehicles = [] }) {
   }, []);
 
   const addVehicle = async () => {
-  const type = window.prompt('Vehicle type (bike or scooter):', 'scooter');
-  if (!type) return;
-  
-  const location = window.prompt('Vehicle location:', 'Montreal Downtown');
-  if (!location) return;
-
-  const newVehicle = {
-    type: type.toLowerCase(),
-    location: location,
-    available: true,
-    provider_id: 1,
+    if (!addForm.location.trim()) return;
+    const newVehicle = {
+      type: addForm.type.toLowerCase(),
+      location: addForm.location.trim(),
+      available: true,
+      rate_per_min: parseFloat(addForm.rate_per_min) || 0.25,
+      provider_id: 1,
+    };
+    const { data, error } = await supabase.from('vehicles').insert(newVehicle).select().single();
+    if (!error && data) {
+      setVehicles((prev) => [...prev, data]);
+      setShowAddForm(false);
+      setAddForm({ type: 'scooter', location: '', rate_per_min: '0.25' });
+    }
   };
-  const { data, error } = await supabase
-    .from('vehicles')
-    .insert(newVehicle)
-    .select()
-    .single();
-  if (!error && data) {
-    setVehicles((prev) => [...prev, data]);
-  }
-};
+
+  const startEdit = (vehicle) => {
+    setEditingId(vehicle.id);
+    setEditForm({
+      type: vehicle.type || 'scooter',
+      location: vehicle.location || '',
+      rate_per_min: String(vehicle.rate_per_min ?? 0.25),
+    });
+  };
+
+  const saveEdit = async (vehicleId) => {
+    const updates = {
+      type: editForm.type.toLowerCase(),
+      location: editForm.location.trim(),
+      rate_per_min: parseFloat(editForm.rate_per_min) || 0.25,
+    };
+    const { error } = await supabase.from('vehicles').update(updates).eq('id', vehicleId);
+    if (!error) {
+      setVehicles((prev) => prev.map((v) => (v.id === vehicleId ? { ...v, ...updates } : v)));
+      setEditingId(null);
+    }
+  };
 
   const toggleVehicleStatus = async (vehicleId) => {
     const vehicle = vehicles.find((v) => v.id === vehicleId);
     if (!vehicle) return;
     const newAvailable = !vehicle.available;
-    const { error } = await supabase
-      .from('vehicles')
-      .update({ available: newAvailable })
-      .eq('id', vehicleId);
+    const { error } = await supabase.from('vehicles').update({ available: newAvailable }).eq('id', vehicleId);
     if (!error) {
-      setVehicles((prev) =>
-        prev.map((v) =>
-          v.id === vehicleId ? { ...v, available: newAvailable } : v
-        )
-      );
+      setVehicles((prev) => prev.map((v) => (v.id === vehicleId ? { ...v, available: newAvailable } : v)));
     }
   };
 
   const removeVehicle = async (vehicleId) => {
-    const { error } = await supabase
-      .from('vehicles')
-      .delete()
-      .eq('id', vehicleId);
+    if (!window.confirm('Remove this vehicle?')) return;
+    const { error } = await supabase.from('vehicles').delete().eq('id', vehicleId);
     if (!error) {
       setVehicles((prev) => prev.filter((v) => v.id !== vehicleId));
     }
@@ -963,23 +972,72 @@ function ProviderVehicles({ initialVehicles = [] }) {
 
   return (
     <Section title="Vehicles" subtitle="Fleet management">
-      <button className="btn btn-primary" onClick={addVehicle}>Add vehicle</button>
+      {!showAddForm ? (
+        <button className="btn btn-primary" onClick={() => setShowAddForm(true)}>Add vehicle</button>
+      ) : (
+        <div className="panel stack-12">
+          <h3>Add new vehicle</h3>
+          <label>
+            Type
+            <select value={addForm.type} onChange={(e) => setAddForm((f) => ({ ...f, type: e.target.value }))}>
+              <option value="scooter">Scooter</option>
+              <option value="bike">Bike</option>
+            </select>
+          </label>
+          <label>
+            Location
+            <input value={addForm.location} onChange={(e) => setAddForm((f) => ({ ...f, location: e.target.value }))} placeholder="e.g. Montreal Downtown" />
+          </label>
+          <label>
+            Rate ($/min)
+            <input value={addForm.rate_per_min} onChange={(e) => setAddForm((f) => ({ ...f, rate_per_min: e.target.value }))} placeholder="0.25" />
+          </label>
+          <div className="row gap-8">
+            <button className="btn btn-primary" onClick={addVehicle}>Save</button>
+            <button className="btn btn-soft" onClick={() => setShowAddForm(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
       <div className="grid-2">
         {vehicles.map((vehicle) => (
-          <div className="card" key={vehicle.id}>
-            <h3>{vehicle.type} #{vehicle.id}</h3>
-            <p>{vehicle.type}</p>
-            <p>Status: {vehicle.available ? 'available' : 'unavailable'}</p>
-            <button className="btn btn-soft" onClick={() => toggleVehicleStatus(vehicle.id)}>
-              Toggle status
-            </button>
-            <button
-              className="btn btn-soft"
-              style={{ color: '#ef4444', marginTop: '8px' }}
-              onClick={() => removeVehicle(vehicle.id)}
-            >
-              Remove
-            </button>
+          <div className="card stack-8" key={vehicle.id}>
+            {editingId === vehicle.id ? (
+              <>
+                <h3>Edit vehicle #{vehicle.id}</h3>
+                <label>
+                  Type
+                  <select value={editForm.type} onChange={(e) => setEditForm((f) => ({ ...f, type: e.target.value }))}>
+                    <option value="scooter">Scooter</option>
+                    <option value="bike">Bike</option>
+                  </select>
+                </label>
+                <label>
+                  Location
+                  <input value={editForm.location} onChange={(e) => setEditForm((f) => ({ ...f, location: e.target.value }))} />
+                </label>
+                <label>
+                  Rate ($/min)
+                  <input value={editForm.rate_per_min} onChange={(e) => setEditForm((f) => ({ ...f, rate_per_min: e.target.value }))} />
+                </label>
+                <div className="row gap-8">
+                  <button className="btn btn-primary" onClick={() => saveEdit(vehicle.id)}>Save</button>
+                  <button className="btn btn-soft" onClick={() => setEditingId(null)}>Cancel</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3>{vehicle.type} #{vehicle.id}</h3>
+                <p>Location: {vehicle.location || 'N/A'}</p>
+                <p>Rate: ${vehicle.rate_per_min ?? 0.25}/min</p>
+                <p>Status: {vehicle.available ? 'available' : 'unavailable'}</p>
+                <div className="row gap-8 wrap">
+                  <button className="btn btn-soft" onClick={() => startEdit(vehicle)}>Edit</button>
+                  <button className="btn btn-soft" onClick={() => toggleVehicleStatus(vehicle.id)}>Toggle status</button>
+                  <button className="btn btn-soft" style={{ color: '#ef4444' }} onClick={() => removeVehicle(vehicle.id)}>Remove</button>
+                </div>
+              </>
+            )}
           </div>
         ))}
       </div>
@@ -1005,7 +1063,57 @@ function RentalAnalytics() {
 }
 
 function GatewayAnalytics() {
-  return <AdminDashboard mode="gatewayMonitoring" />;
+  const [stats, setStats] = useState(null);
+  const [log, setLog] = useState([]);
+
+  useEffect(() => {
+    const load = async () => {
+      const { gateway } = await import('../../api-gateway/apiClient');
+      setStats(gateway.getStats());
+      setLog(gateway.getRequestLog().slice(0, 20));
+    };
+    load();
+    const interval = setInterval(load, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <>
+      <AdminDashboard mode="gatewayMonitoring" />
+      {stats && (
+        <section className="panel stack-12" style={{ marginTop: '1rem' }}>
+          <h2>API Gateway Statistics</h2>
+          <div className="grid-2">
+            <div className="card"><h3>Total Requests</h3><p>{stats.total}</p></div>
+            <div className="card"><h3>Successful</h3><p style={{ color: 'var(--success)' }}>{stats.successful}</p></div>
+            <div className="card"><h3>Failed</h3><p style={{ color: 'var(--error)' }}>{stats.failed}</p></div>
+            <div className="card"><h3>Avg Latency</h3><p>{stats.avgDuration}ms</p></div>
+          </div>
+          {Object.keys(stats.byTable).length > 0 && (
+            <div className="card stack-8">
+              <h3>Requests by Table</h3>
+              {Object.entries(stats.byTable).map(([table, count]) => (
+                <p key={table}>{table}: {count} requests</p>
+              ))}
+            </div>
+          )}
+          {log.length > 0 && (
+            <div className="card stack-8">
+              <h3>Recent API Requests</h3>
+              {log.map((entry) => (
+                <div key={entry.id} style={{ borderBottom: '1px solid var(--surface)', padding: '4px 0', fontSize: '0.85rem' }}>
+                  <span style={{ color: entry.success ? 'var(--success)' : 'var(--error)' }}>{entry.method}</span>
+                  {' '}<strong>{entry.table}</strong>
+                  {' '}<span style={{ color: '#94a3b8' }}>{entry.durationMs}ms</span>
+                  {' '}<span style={{ color: '#64748b' }}>{new Date(entry.timestamp).toLocaleTimeString()}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+    </>
+  );
 }
 
 function RecommendationBanner({ user, onSelectTab }) {

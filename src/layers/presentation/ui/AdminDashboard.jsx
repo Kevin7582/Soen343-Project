@@ -239,6 +239,60 @@ function FleetPanel({ fleetStatus }) {
   );
 }
 
+function CityBreakdown({ title, subtitle, data, valueLabel }) {
+  const entries = Object.entries(data || {});
+  if (entries.length === 0) {
+    return (
+      <section style={styles.section}>
+        <div style={styles.sectionHeader}>
+          <div>
+            <h2 style={styles.sectionTitle}>{title}</h2>
+            <p style={styles.sectionSubtitle}>{subtitle}</p>
+          </div>
+        </div>
+        <p style={styles.empty}>No data available.</p>
+      </section>
+    );
+  }
+
+  const maxValue = Math.max(1, ...entries.map(([, v]) => (typeof v === "object" ? v.reserved : v)));
+
+  return (
+    <section style={styles.section}>
+      <div style={styles.sectionHeader}>
+        <div>
+          <h2 style={styles.sectionTitle}>{title}</h2>
+          <p style={styles.sectionSubtitle}>{subtitle}</p>
+        </div>
+      </div>
+      <div style={{ display: "grid", gap: "0.6rem" }}>
+        {entries.map(([city, value]) => {
+          const numValue = typeof value === "object" ? value.reserved : value;
+          const label = typeof value === "object"
+            ? `${value.reserved} reserved / ${value.total} total`
+            : `${numValue} ${valueLabel || ""}`;
+          return (
+            <div key={city} style={{ display: "grid", gap: "0.3rem" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", color: "#e2e8f0" }}>
+                <span>{city}</span>
+                <span style={{ color: "#94a3b8" }}>{label}</span>
+              </div>
+              <div style={{ width: "100%", height: "10px", borderRadius: "999px", background: "rgba(30,41,59,0.9)" }}>
+                <div style={{
+                  height: "100%",
+                  borderRadius: "999px",
+                  width: `${Math.max(5, (numValue / maxValue) * 100)}%`,
+                  background: "linear-gradient(90deg, #38bdf8, #0f766e)",
+                }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function ActiveRentalsList({ rentals }) {
   return (
     <section style={styles.section}>
@@ -454,6 +508,18 @@ export default function AdminDashboard({ mode = "overview" }) {
         sub: "Operational parking locations in monitoring scope",
         accent: "#0f766e",
       },
+      {
+        label: "Bikes Currently Rented",
+        value: data.bikesRented ?? 0,
+        sub: "Active bike rentals right now",
+        accent: "#2563eb",
+      },
+      {
+        label: "Scooters Available",
+        value: data.scootersAvailable ?? 0,
+        sub: "Scooters ready for reservation",
+        accent: "#f59e0b",
+      },
     ];
   }, [data]);
 
@@ -526,6 +592,18 @@ export default function AdminDashboard({ mode = "overview" }) {
         <>
           <HourlyTrend rows={data.hourlyRentals} />
           <VehicleUsage usage={data.vehicleUsage} />
+          <CityBreakdown
+            title="Active Rentals by City"
+            subtitle="Current live rentals grouped by vehicle location."
+            data={data.rentalsByCity}
+            valueLabel="active rentals"
+          />
+          <CityBreakdown
+            title="Usage by City"
+            subtitle="Total completed trips grouped by city (e.g., Montreal vs Laval)."
+            data={data.usageByCity}
+            valueLabel="completed trips"
+          />
           <FleetPanel fleetStatus={data.fleetStatus} />
           <ActiveRentalsList rentals={data.activeRentals} />
         </>
@@ -535,6 +613,11 @@ export default function AdminDashboard({ mode = "overview" }) {
         <>
           <HealthPanel monitoring={data.monitoring} />
           <AlertsPanel alerts={data.alerts} />
+          <CityBreakdown
+            title="Parking Reservations by City"
+            subtitle="Parking spots reserved per city area."
+            data={data.parkingByCity}
+          />
           <ParkingTable spots={data.parkingUtilization} />
           <EventFeed events={events} />
         </>

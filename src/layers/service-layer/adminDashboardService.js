@@ -2,6 +2,17 @@
 // Facade Pattern: Aggregates analytics and monitoring data for admin views.
 
 import { supabase } from "../data-layer/supabaseClient";
+import { gateway } from "../api-gateway/apiClient";
+
+function extractCity(locationOrAddress) {
+  if (!locationOrAddress) return "Unknown";
+  const str = String(locationOrAddress).trim();
+  // Try to extract city from common patterns like "123 Rue X, Montreal" or "Montreal Downtown"
+  const parts = str.split(",").map((s) => s.trim());
+  if (parts.length >= 2) return parts[parts.length - 1] || "Unknown";
+  // If no comma, use the last word (e.g. "Montreal Downtown" -> "Montreal Downtown")
+  return str || "Unknown";
+}
 
 function createHourlyBuckets() {
   return Array.from({ length: 24 }, (_, hour) => ({
@@ -112,11 +123,7 @@ function buildAlerts({ parkingUtilization, fleetStatus, activeRentalsCount }) {
 
 const AdminDashboardService = {
   async getTotalUsers() {
-    const { count, error } = await supabase
-      .from("users")
-      .select("*", { count: "exact", head: true });
-    if (error) throw error;
-    return count ?? 0;
+    return gateway.count("users");
   },
 
   async getActiveRentals() {
@@ -173,12 +180,7 @@ const AdminDashboardService = {
   },
 
   async getActiveParking() {
-    const { count, error } = await supabase
-      .from("parking_reservations")
-      .select("*", { count: "exact", head: true })
-      .eq("status", "active");
-    if (error) throw error;
-    return count ?? 0;
+    return gateway.count("parking_reservations", { status: "active" });
   },
 
   async getHourlyRentalTrend() {
@@ -232,6 +234,77 @@ const AdminDashboardService = {
     };
   },
 
+  async getBikesCurrentlyRented() {
+    const { data, error } = await supabase
+      .from("rentals")
+      .select("vehicles(type)")
+      .eq("status", "active");
+    if (error) throw error;
+    return (data ?? []).filter(
+      (r) => r.vehicles?.type?.toLowerCase() === "bike"
+    ).length;
+  },
+
+  async getScootersCurrentlyAvailable() {
+    const { data, error } = await supabase
+      .from("vehicles")
+      .select("id, type, available")
+      .eq("available", true);
+    if (error) throw error;
+    return (data ?? []).filter(
+      (v) => v.type?.toLowerCase() === "scooter"
+    ).length;
+  },
+
+  async getActiveRentalsByCity() {
+    const { data, error } = await supabase
+      .from("rentals")
+      .select("id, vehicles(location)")
+      .eq("status", "active");
+    if (error) throw error;
+
+    const byCity = {};
+    (data ?? []).forEach((r) => {
+      const city = extractCity(r.vehicles?.location);
+      byCity[city] = (byCity[city] || 0) + 1;
+    });
+    return byCity;
+  },
+
+  async getUsageByCity() {
+    const { data, error } = await supabase
+      .from("rentals")
+      .select("id, vehicles(location)")
+      .eq("status", "completed");
+    if (error) throw error;
+
+    const byCity = {};
+    (data ?? []).forEach((r) => {
+      const city = extractCity(r.vehicles?.location);
+      byCity[city] = (byCity[city] || 0) + 1;
+    });
+    return byCity;
+  },
+
+  async getParkingReservationsByCity() {
+    const { data, error } = await supabase
+      .from("parking_spots")
+      .select("id, address, available, total");
+    if (error) throw error;
+
+    const byCity = {};
+    (data ?? []).forEach((spot) => {
+      const city = extractCity(spot.address);
+      if (!byCity[city]) {
+        byCity[city] = { reserved: 0, total: 0 };
+      }
+      const reserved = Math.max(0, (spot.total || 0) - (spot.available || 0));
+      byCity[city].reserved += reserved;
+      byCity[city].total += spot.total || 0;
+    });
+    return byCity;
+  },
+
   async getDashboardSummary() {
     const [
       totalUsers,
@@ -242,6 +315,11 @@ const AdminDashboardService = {
       activeParking,
       hourlyRentals,
       fleetStatus,
+      bikesRented,
+      scootersAvailable,
+      rentalsByCity,
+      usageByCity,
+      parkingByCity,
     ] = await Promise.all([
       this.getTotalUsers(),
       this.getActiveRentals(),
@@ -251,6 +329,11 @@ const AdminDashboardService = {
       this.getActiveParking(),
       this.getHourlyRentalTrend(),
       this.getFleetStatus(),
+      this.getBikesCurrentlyRented(),
+      this.getScootersCurrentlyAvailable(),
+      this.getActiveRentalsByCity(),
+      this.getUsageByCity(),
+      this.getParkingReservationsByCity(),
     ]);
 
     const activeRentalsCount = activeRentals.length;
@@ -278,6 +361,11 @@ const AdminDashboardService = {
       fleetStatus,
       monitoring,
       alerts,
+      bikesRented,
+      scootersAvailable,
+      rentalsByCity,
+      usageByCity,
+      parkingByCity,
     };
   },
 

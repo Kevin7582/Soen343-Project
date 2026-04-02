@@ -84,10 +84,11 @@ async function getUserByCredentials(email, password) {
   return data || null;
 }
 
-async function createUser({ email, password, role }) {
+async function createUser({ name, email, password, role }) {
   const { data, error } = await supabase
     .from('users')
     .insert({
+      name: String(name || '').trim() || null,
       email: normalizeEmail(email),
       password: String(password || '123456'),
       role: normalizeRole(role),
@@ -166,6 +167,7 @@ export function AuthProvider({ children }) {
     const appUser = makeAppUser({
       id: row.id,
       email: normalizedEmail,
+      name: row.name || '',
       role: row.role,
       token: 'users-table-session',
       source: 'users_table',
@@ -183,6 +185,7 @@ export function AuthProvider({ children }) {
     let row = await getUserByEmail(normalizedEmail);
     if (!row) {
       row = await createUser({
+        name,
         email: normalizedEmail,
         password,
         role,
