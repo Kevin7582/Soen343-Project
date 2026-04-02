@@ -180,9 +180,11 @@ export function AuthProvider({ children }) {
   }, [setLocalUser]);
 
   const register = useCallback(async (name, email, password, role = ROLES.CITIZEN) => {
-    const normalizedEmail = normalizeEmail(email);
+    if (normalizeRole(role) === ROLES.ADMIN) {
+      throw new Error('Admin accounts cannot be created through registration. Contact a system administrator.');
+    }
 
-    let row = await getUserByEmail(normalizedEmail);
+    const normalizedEmail = normalizeEmail(email);
     if (!row) {
       row = await createUser({
         name,

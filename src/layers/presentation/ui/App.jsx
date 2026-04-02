@@ -6,6 +6,8 @@ import TransitMap from './TransitMap';
 import RecommendationService from '../../service-layer/recommendationService';
 import { createRoleDashboardCreator } from './roleDashboardFactory';
 import { supabase } from '../../data-layer/supabaseClient';
+import { fetchBixiStations, getBixiStats } from '../../service-layer/bixiService';
+import { fetchStmStatus } from '../../service-layer/stmService';
 import {
   completeParkingReservation,
   cancelParkingReservation,
@@ -13,9 +15,7 @@ import {
   fetchProviderRentals,
   fetchTransitRoutes,
   fetchUserParkingReservation,
-  fetchUserTransitPlans,
   fetchVehicles,
-  planTransitTrip,
   reserveParkingSpot,
   startParkingReservation,
   updateParkingReservationDuration,
@@ -24,12 +24,13 @@ import VehicleMap from './VehicleMap';
 import ParkingMap from './ParkingMap';
 
 const TAB_LABELS = {
-  home: 'Home',
-  recommendations: 'For You',
-  search: 'Find Vehicle',
-  transit: 'Transit',
+  dashboard: 'Dashboard',
+  mobility: 'Mobility',
   parking: 'Parking',
+  transit: 'Transit',
+  analytics: 'Analytics',
   activeRental: 'Active Rental',
+  home: 'Home',
   vehicles: 'Vehicles',
   rentalData: 'Rentals',
   rentalAnalytics: 'Rental Analytics',
@@ -118,47 +119,60 @@ function AuthScreen() {
 
   const toggleMode = () => {
     clearFormError();
-    setMode((prev) => (prev === 'login' ? 'register' : 'login'));
+    setMode((prev) => {
+      const next = prev === 'login' ? 'register' : 'login';
+      if (next === 'register' && role === ROLES.ADMIN) setRole(ROLES.CITIZEN);
+      return next;
+    });
   };
 
   const isRegisterMode = mode === 'register';
 
   return (
     <div className="auth-wrap">
-      <div className="auth-card">
+      <div className="auth-card fade-up">
         <h1>SUMMS</h1>
-        <p><strong>Mode:</strong> {isRegisterMode ? 'REGISTER' : 'LOGIN'}</p>
         <p>Smart Urban Mobility Management</p>
 
         <form onSubmit={submit} className="stack-12">
+          <label style={{ fontSize: '0.78rem', color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>
+            {isRegisterMode ? 'Create your account' : 'Sign in to continue'}
+          </label>
+
           {isRegisterMode && (
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" />
+            <label>Full name<input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" /></label>
           )}
 
-          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" type="text" />
-          <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" type="password" />
+          <label>Email<input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" type="text" /></label>
+          <label>Password<input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter password" type="password" /></label>
 
-          <div className="role-row">
-            <RoleButton label="Citizen" active={role === ROLES.CITIZEN} onClick={() => setRole(ROLES.CITIZEN)} />
-            <RoleButton label="Provider" active={role === ROLES.MOBILITY_PROVIDER} onClick={() => setRole(ROLES.MOBILITY_PROVIDER)} />
-            <RoleButton label="Admin" active={role === ROLES.ADMIN} onClick={() => setRole(ROLES.ADMIN)} />
+          <div>
+            <label>I am a...</label>
+            <div className="role-row" style={{ marginTop: 8, gridTemplateColumns: isRegisterMode ? '1fr 1fr' : 'repeat(3, 1fr)' }}>
+              <RoleButton label="Citizen" active={role === ROLES.CITIZEN} onClick={() => setRole(ROLES.CITIZEN)} />
+              <RoleButton label="Provider" active={role === ROLES.MOBILITY_PROVIDER} onClick={() => setRole(ROLES.MOBILITY_PROVIDER)} />
+              {!isRegisterMode && (
+                <RoleButton label="Admin" active={role === ROLES.ADMIN} onClick={() => setRole(ROLES.ADMIN)} />
+              )}
+            </div>
           </div>
 
           {!!formError && <div className="auth-error">{formError}</div>}
 
-          <button className="btn btn-primary" type="submit" disabled={submitting}>
-            {submitting ? 'Please wait...' : isRegisterMode ? 'Register' : 'Log In'}
+          <button className="btn btn-primary" type="submit" disabled={submitting} style={{ width: '100%', padding: '12px', fontSize: '0.95rem' }}>
+            {submitting ? 'Please wait...' : isRegisterMode ? 'Create Account' : 'Sign In'}
           </button>
 
-          {!isRegisterMode && (
-            <button className="btn btn-link" type="button" onClick={onForgotPassword} disabled={submitting}>
-              Forgot password?
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <button className="btn btn-link" type="button" onClick={toggleMode} style={{ padding: '4px 0' }}>
+              {isRegisterMode ? 'Already have an account?' : 'Create an account'}
             </button>
-          )}
-
-          <button className="btn btn-link" type="button" onClick={toggleMode}>
-            {isRegisterMode ? 'Already have an account? Log In' : 'Need an account? Register'}
-          </button>
+            {!isRegisterMode && (
+              <button className="btn btn-link" type="button" onClick={onForgotPassword} disabled={submitting} style={{ padding: '4px 0' }}>
+                Forgot password?
+              </button>
+            )}
+          </div>
         </form>
       </div>
     </div>
@@ -186,20 +200,13 @@ function Dashboard() {
     rentalError,
     clearError,
   } = useRental();
-  const [tab, setTab] = useState('home');
+  const [tab, setTab] = useState(user?.role === 'user' ? 'dashboard' : 'home');
   const [vehicleType, setVehicleType] = useState('all');
   const [radius, setRadius] = useState('2');
   const [paymentDone, setPaymentDone] = useState(false);
+  const [showPaymentGate, setShowPaymentGate] = useState(false);
   const [parkingReservation, setParkingReservation] = useState(null);
   const [parkingDuration, setParkingDuration] = useState('1');
-  const [transitPlans, setTransitPlans] = useState([]);
-  const [transitFrom, setTransitFrom] = useState('Downtown');
-  const [transitTo, setTransitTo] = useState('Campus');
-  const [selectedTransitRouteId, setSelectedTransitRouteId] = useState('');
-  const [transitStartPoint, setTransitStartPoint] = useState(null);
-  const [transitEndPoint, setTransitEndPoint] = useState(null);
-  const [transitTravelMode, setTransitTravelMode] = useState('TRANSIT');
-  const [transitRouteInfo, setTransitRouteInfo] = useState(null);
   const [mobilityError, setMobilityError] = useState('');
 
   const { loadingData, vehiclesData, transitRoutes, parkingSpots, providerRentals, refreshDashboardData } = useDashboardData();
@@ -212,43 +219,27 @@ function Dashboard() {
 
   useEffect(() => {
     if (!tabs.includes(tab)) {
-      setTab('home');
+      setTab(tabs[0] || 'dashboard');
     }
   }, [tab, tabs]);
-
-  useEffect(() => {
-    if (!transitRoutes.length) {
-      setSelectedTransitRouteId('');
-      return;
-    }
-    const exists = transitRoutes.some((route) => String(route.id) === String(selectedTransitRouteId));
-    if (!exists) {
-      setSelectedTransitRouteId(String(transitRoutes[0].id));
-    }
-  }, [transitRoutes, selectedTransitRouteId]);
 
   useEffect(() => {
     let mounted = true;
     async function loadUserMobilityData() {
       if (!user?.id) {
         setParkingReservation(null);
-        setTransitPlans([]);
         return;
       }
       try {
-        const [reservationData, plans] = await Promise.all([
-          fetchUserParkingReservation(user.id),
-          fetchUserTransitPlans(user.id),
-        ]);
+        const reservationData = await fetchUserParkingReservation(user.id);
         if (!mounted) return;
         setParkingReservation(reservationData);
         if (reservationData?.durationHours) {
           setParkingDuration(String(reservationData.durationHours));
         }
-        setTransitPlans(plans);
       } catch (error) {
         if (!mounted) return;
-        setMobilityError(error?.message || 'Unable to load parking/transit state.');
+        setMobilityError(error?.message || 'Unable to load parking state.');
       }
     }
     loadUserMobilityData();
@@ -267,11 +258,6 @@ function Dashboard() {
     return list.filter((vehicle) => vehicle.distance <= maxRadius);
   }, [vehiclesData, vehicleType, radius]);
 
-  const selectedTransitRoute = useMemo(
-    () => transitRoutes.find((route) => String(route.id) === String(selectedTransitRouteId)) || null,
-    [transitRoutes, selectedTransitRouteId]
-  );
-
   const handleReserveVehicle = async (vehicle) => {
     if (reservation || activeRental) {
       setMobilityError('You can only have one vehicle reservation/rental at a time.');
@@ -288,7 +274,13 @@ function Dashboard() {
     }
   };
 
-  const beginPayment = async () => {
+  const beginPayment = () => {
+    if (!reservation) return;
+    setShowPaymentGate(true);
+  };
+
+  const onPaymentComplete = async () => {
+    setShowPaymentGate(false);
     if (!reservation) return;
 
     const transactionId = `tx_${Date.now()}`;
@@ -391,50 +383,6 @@ function Dashboard() {
     }
   };
 
-  const handlePlanTransit = async (route, fromOverride, toOverride) => {
-    if (!user?.id) return;
-    const fromValue = String(fromOverride ?? transitFrom).trim();
-    const toValue = String(toOverride ?? transitTo).trim();
-    if (!fromValue || !toValue) {
-      setMobilityError('Enter both origin and destination to plan a transit trip.');
-      return;
-    }
-    setMobilityError('');
-    try {
-      const plan = await planTransitTrip(user.id, route, fromValue, toValue);
-      setTransitPlans((prev) => [plan, ...prev].slice(0, 10));
-    } catch (error) {
-      setMobilityError(error?.message || 'Unable to plan transit trip.');
-    }
-  };
-
-  const handleUseSelectedRouteEndpoints = () => {
-    if (!selectedTransitRoute?.fromCoords || !selectedTransitRoute?.toCoords) return;
-    setTransitStartPoint(selectedTransitRoute.fromCoords);
-    setTransitEndPoint(selectedTransitRoute.toCoords);
-    setTransitFrom(selectedTransitRoute.from || 'Route start');
-    setTransitTo(selectedTransitRoute.to || 'Route end');
-  };
-
-  const handlePlanTransitFromMap = async () => {
-    if (!transitStartPoint || !transitEndPoint) {
-      setMobilityError('Set both start and end points on the map first.');
-      return;
-    }
-
-    const route = selectedTransitRoute || {
-      id: 'custom-map-route',
-      line: `${transitTravelMode} route`,
-      nextDeparture: 'N/A',
-      from: transitFrom,
-      to: transitTo,
-    };
-
-    const fromLabel = `${transitFrom.trim() || 'Map start'} (${transitStartPoint[0]}, ${transitStartPoint[1]})`;
-    const toLabel = `${transitTo.trim() || 'Map end'} (${transitEndPoint[0]}, ${transitEndPoint[1]})`;
-    await handlePlanTransit(route, fromLabel, toLabel);
-  };
-
   const roleMainContent = roleDashboardCreator.createMainContent({
     renderCitizen: () => (
       <CitizenViews
@@ -446,6 +394,7 @@ function Dashboard() {
         radius={radius}
         setRadius={setRadius}
         vehicles={filteredVehicles}
+        vehiclesData={vehiclesData}
         reservation={reservation}
         activeRental={activeRental}
         hasOpenVehicleFlow={Boolean(reservation || activeRental)}
@@ -454,26 +403,7 @@ function Dashboard() {
         onCancelReservation={clearReservation}
         onProceedPayment={beginPayment}
         onReturnVehicle={returnVehicle}
-        transitRoutes={transitRoutes}
         parkingSpots={parkingSpots}
-        transitPlans={transitPlans}
-        transitFrom={transitFrom}
-        transitTo={transitTo}
-        setTransitFrom={setTransitFrom}
-        setTransitTo={setTransitTo}
-        selectedTransitRoute={selectedTransitRoute}
-        onSelectTransitRoute={setSelectedTransitRouteId}
-        transitStartPoint={transitStartPoint}
-        transitEndPoint={transitEndPoint}
-        onSetTransitStartPoint={setTransitStartPoint}
-        onSetTransitEndPoint={setTransitEndPoint}
-        transitTravelMode={transitTravelMode}
-        onSetTransitTravelMode={setTransitTravelMode}
-        transitRouteInfo={transitRouteInfo}
-        onTransitRouteInfoChange={setTransitRouteInfo}
-        onUseSelectedRouteEndpoints={handleUseSelectedRouteEndpoints}
-        onPlanTransitFromMap={handlePlanTransitFromMap}
-        onPlanTransit={handlePlanTransit}
         parkingReservation={parkingReservation}
         parkingDuration={parkingDuration}
         setParkingDuration={setParkingDuration}
@@ -508,19 +438,311 @@ function Dashboard() {
 
         {tab === 'profile' && <Profile user={user} role={user?.role} onUpdatePreferences={updatePreferences} />}
       </main>
+
+      {showPaymentGate && (
+        <PaymentGate
+          vehicle={reservation?.vehicle}
+          onConfirm={onPaymentComplete}
+          onCancel={() => setShowPaymentGate(false)}
+        />
+      )}
     </div>
   );
 }
 
+function PaymentGate({ vehicle, onConfirm, onCancel }) {
+  const [cardNumber, setCardNumber] = useState('');
+  const [expiry, setExpiry] = useState('');
+  const [cvc, setCvc] = useState('');
+  const [cardName, setCardName] = useState('');
+  const [processing, setProcessing] = useState(false);
+  const [step, setStep] = useState('form'); // 'form' | 'processing' | 'success'
+
+  const formatCardNumber = (value) => {
+    const digits = value.replace(/\D/g, '').slice(0, 16);
+    return digits.replace(/(.{4})/g, '$1 ').trim();
+  };
+
+  const formatExpiry = (value) => {
+    const digits = value.replace(/\D/g, '').slice(0, 4);
+    if (digits.length > 2) return digits.slice(0, 2) + '/' + digits.slice(2);
+    return digits;
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    setStep('processing');
+    setTimeout(() => {
+      setStep('success');
+      setTimeout(() => {
+        onConfirm();
+      }, 1500);
+    }, 2000);
+  };
+
+  const isFormValid = cardNumber.replace(/\s/g, '').length >= 13 && expiry.length >= 4 && cvc.length >= 3 && cardName.trim().length > 0;
+
+  return (
+    <div style={paymentStyles.overlay}>
+      <div style={paymentStyles.modal} className="fade-up">
+        {step === 'form' && (
+          <>
+            <div style={paymentStyles.header}>
+              <div>
+                <div style={paymentStyles.brand}>SUMMS Pay</div>
+                <p style={paymentStyles.headerSub}>Secure payment simulation</p>
+              </div>
+              <button style={paymentStyles.closeBtn} onClick={onCancel}>&times;</button>
+            </div>
+
+            <div style={paymentStyles.orderSummary}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <p style={{ color: 'var(--text)', fontWeight: 600, margin: 0 }}>{vehicle?.name || 'Vehicle rental'}</p>
+                  <p style={{ color: 'var(--text-3)', fontSize: '0.82rem', margin: '2px 0 0' }}>{vehicle?.type || 'vehicle'} &mdash; ${vehicle?.ratePerMin ?? 0.25}/min</p>
+                </div>
+                <span style={paymentStyles.badge}>Pay-per-minute</span>
+              </div>
+            </div>
+
+            <form onSubmit={handleSubmit} style={paymentStyles.form}>
+              <div style={paymentStyles.field}>
+                <label style={paymentStyles.label}>Cardholder name</label>
+                <input
+                  style={paymentStyles.input}
+                  value={cardName}
+                  onChange={(e) => setCardName(e.target.value)}
+                  placeholder="Jane Doe"
+                  autoFocus
+                />
+              </div>
+
+              <div style={paymentStyles.field}>
+                <label style={paymentStyles.label}>Card number</label>
+                <input
+                  style={paymentStyles.input}
+                  value={cardNumber}
+                  onChange={(e) => setCardNumber(formatCardNumber(e.target.value))}
+                  placeholder="4242 4242 4242 4242"
+                  maxLength={19}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div style={paymentStyles.field}>
+                  <label style={paymentStyles.label}>Expiry</label>
+                  <input
+                    style={paymentStyles.input}
+                    value={expiry}
+                    onChange={(e) => setExpiry(formatExpiry(e.target.value))}
+                    placeholder="MM/YY"
+                    maxLength={5}
+                  />
+                </div>
+                <div style={paymentStyles.field}>
+                  <label style={paymentStyles.label}>CVC</label>
+                  <input
+                    style={paymentStyles.input}
+                    value={cvc}
+                    onChange={(e) => setCvc(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    placeholder="123"
+                    maxLength={4}
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={!isFormValid}
+                style={{
+                  ...paymentStyles.payBtn,
+                  opacity: isFormValid ? 1 : 0.5,
+                  cursor: isFormValid ? 'pointer' : 'not-allowed',
+                }}
+              >
+                Confirm Payment
+              </button>
+
+              <p style={paymentStyles.disclaimer}>
+                This is a simulated payment for demonstration purposes. No real charges will be made.
+              </p>
+            </form>
+          </>
+        )}
+
+        {step === 'processing' && (
+          <div style={paymentStyles.statusScreen}>
+            <div style={paymentStyles.spinner} />
+            <p style={{ color: 'var(--text)', fontWeight: 600, fontSize: '1.1rem', fontFamily: 'var(--font-display)' }}>Processing payment...</p>
+            <p style={{ color: 'var(--text-3)', fontSize: '0.85rem' }}>Verifying card details</p>
+          </div>
+        )}
+
+        {step === 'success' && (
+          <div style={paymentStyles.statusScreen}>
+            <div style={paymentStyles.checkCircle}>&#10003;</div>
+            <p style={{ color: 'var(--success)', fontWeight: 600, fontSize: '1.1rem', fontFamily: 'var(--font-display)' }}>Payment confirmed</p>
+            <p style={{ color: 'var(--text-3)', fontSize: '0.85rem' }}>Starting your rental...</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const paymentStyles = {
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(0,0,0,0.7)',
+    backdropFilter: 'blur(8px)',
+    display: 'grid',
+    placeItems: 'center',
+    zIndex: 1000,
+    padding: '24px',
+  },
+  modal: {
+    width: 'min(440px, 100%)',
+    background: 'var(--surface)',
+    border: '1px solid var(--border-vis)',
+    borderRadius: '20px',
+    overflow: 'hidden',
+    boxShadow: '0 25px 60px rgba(0,0,0,0.5), 0 0 80px rgba(228,169,77,0.06)',
+  },
+  header: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    padding: '24px 24px 0',
+  },
+  brand: {
+    fontFamily: 'var(--font-display)',
+    fontWeight: 800,
+    fontSize: '1.3rem',
+    color: 'var(--accent)',
+    letterSpacing: '-0.03em',
+  },
+  headerSub: {
+    color: 'var(--text-3)',
+    fontSize: '0.8rem',
+    margin: '2px 0 0',
+  },
+  closeBtn: {
+    background: 'none',
+    border: 'none',
+    color: 'var(--text-3)',
+    fontSize: '1.5rem',
+    cursor: 'pointer',
+    padding: '0 4px',
+    lineHeight: 1,
+  },
+  orderSummary: {
+    margin: '16px 24px',
+    padding: '14px 16px',
+    background: 'var(--bg)',
+    borderRadius: '12px',
+    border: '1px solid var(--border)',
+  },
+  badge: {
+    fontSize: '0.7rem',
+    fontWeight: 600,
+    textTransform: 'uppercase',
+    letterSpacing: '0.06em',
+    color: 'var(--accent-text)',
+    background: 'var(--accent-dim)',
+    padding: '4px 10px',
+    borderRadius: '999px',
+  },
+  form: {
+    display: 'grid',
+    gap: '14px',
+    padding: '0 24px 24px',
+  },
+  field: {
+    display: 'grid',
+    gap: '4px',
+  },
+  label: {
+    fontSize: '0.78rem',
+    fontWeight: 500,
+    color: 'var(--text-2)',
+    letterSpacing: '0.01em',
+  },
+  input: {
+    width: '100%',
+    padding: '11px 14px',
+    background: 'var(--bg)',
+    border: '1px solid var(--border-vis)',
+    borderRadius: '10px',
+    color: 'var(--text)',
+    fontSize: '0.95rem',
+    fontFamily: "'DM Sans', system-ui, monospace",
+    letterSpacing: '0.04em',
+    outline: 'none',
+    transition: 'border-color 0.2s, box-shadow 0.2s',
+    margin: 0,
+  },
+  payBtn: {
+    width: '100%',
+    padding: '13px',
+    background: 'var(--accent)',
+    color: '#111',
+    border: 'none',
+    borderRadius: '12px',
+    fontSize: '0.95rem',
+    fontWeight: 700,
+    fontFamily: "'DM Sans', system-ui, sans-serif",
+    boxShadow: '0 4px 20px rgba(228,169,77,0.25)',
+    transition: 'all 0.2s',
+    marginTop: '4px',
+  },
+  disclaimer: {
+    fontSize: '0.72rem',
+    color: 'var(--text-3)',
+    textAlign: 'center',
+    margin: 0,
+    lineHeight: 1.5,
+  },
+  statusScreen: {
+    display: 'grid',
+    justifyItems: 'center',
+    gap: '12px',
+    padding: '60px 24px',
+    textAlign: 'center',
+  },
+  spinner: {
+    width: '40px',
+    height: '40px',
+    border: '3px solid var(--border-vis)',
+    borderTopColor: 'var(--accent)',
+    borderRadius: '50%',
+    animation: 'spin 0.8s linear infinite',
+  },
+  checkCircle: {
+    width: '48px',
+    height: '48px',
+    borderRadius: '50%',
+    background: 'var(--success-dim)',
+    color: 'var(--success)',
+    display: 'grid',
+    placeItems: 'center',
+    fontSize: '1.4rem',
+    fontWeight: 700,
+    border: '2px solid var(--success)',
+  },
+};
+
 function Sidebar({ user, tabs, activeTab, onSelectTab, onLogout }) {
+  const roleLabel = user?.role === 'provider' ? 'Provider' : user?.role === 'admin' ? 'Admin' : 'Citizen';
   return (
     <aside className="sidebar">
       <div>
         <h2>SUMMS</h2>
-        <p>{user?.name}</p>
+        <p>{user?.name || user?.email}</p>
+        <span className="status-pill" style={{ marginTop: 4, background: 'var(--accent-dim)', color: 'var(--accent-text)', fontSize: '0.7rem' }}>{roleLabel}</span>
       </div>
 
-      <div className="stack-8">
+      <div className="stack-4">
         {tabs.map((tabName) => (
           <button
             key={tabName}
@@ -532,7 +754,7 @@ function Sidebar({ user, tabs, activeTab, onSelectTab, onLogout }) {
         ))}
       </div>
 
-      <button className="btn btn-danger" onClick={onLogout}>Log Out</button>
+      <button className="btn btn-danger" onClick={onLogout}>Sign Out</button>
     </aside>
   );
 }
@@ -546,6 +768,7 @@ function CitizenViews({
   radius,
   setRadius,
   vehicles,
+  vehiclesData,
   reservation,
   activeRental,
   hasOpenVehicleFlow,
@@ -554,26 +777,7 @@ function CitizenViews({
   onCancelReservation,
   onProceedPayment,
   onReturnVehicle,
-  transitRoutes,
   parkingSpots,
-  transitPlans,
-  transitFrom,
-  transitTo,
-  setTransitFrom,
-  setTransitTo,
-  selectedTransitRoute,
-  onSelectTransitRoute,
-  transitStartPoint,
-  transitEndPoint,
-  onSetTransitStartPoint,
-  onSetTransitEndPoint,
-  transitTravelMode,
-  onSetTransitTravelMode,
-  transitRouteInfo,
-  onTransitRouteInfoChange,
-  onUseSelectedRouteEndpoints,
-  onPlanTransitFromMap,
-  onPlanTransit,
   parkingReservation,
   parkingDuration,
   setParkingDuration,
@@ -585,251 +789,710 @@ function CitizenViews({
 }) {
   return (
     <>
-      {tab === 'home' && (
-        <Section title="Quick actions" subtitle="Citizen dashboard">
-          <RecommendationBanner user={user} onSelectTab={onSelectTab} />
-          <div className="grid-2">
-            <Card title="Find a vehicle" text="Scooters, bikes, and more in Montreal" action={<button className="btn btn-primary" onClick={() => onSelectTab('search')}>Open</button>} />
-            <Card title="Public transit" text="Routes, schedules, delays" action={<button className="btn btn-primary" onClick={() => onSelectTab('transit')}>Open</button>} />
-            <Card title="Parking" text="Available spaces nearby" action={<button className="btn btn-primary" onClick={() => onSelectTab('parking')}>Open</button>} />
-            <Card title="Active rental" text="View or return your vehicle" action={<button className="btn btn-primary" onClick={() => onSelectTab('activeRental')}>Open</button>} />
-          </div>
-        </Section>
+      {tab === 'dashboard' && (
+        <DashboardPage user={user} onSelectTab={onSelectTab} reservation={reservation} activeRental={activeRental} vehiclesData={vehiclesData} parkingSpots={parkingSpots} />
       )}
 
-      {tab === 'recommendations' && <RecommendationsView user={user} onSelectTab={onSelectTab} />}
+      {tab === 'mobility' && (
+        <MobilityPage
+          user={user}
+          vehicleType={vehicleType}
+          setVehicleType={setVehicleType}
+          radius={radius}
+          setRadius={setRadius}
+          vehicles={vehicles}
+          reservation={reservation}
+          activeRental={activeRental}
+          hasOpenVehicleFlow={hasOpenVehicleFlow}
+          paymentDone={paymentDone}
+          onReserveVehicle={onReserveVehicle}
+          onCancelReservation={onCancelReservation}
+          onProceedPayment={onProceedPayment}
+          onSelectTab={onSelectTab}
+        />
+      )}
 
-      {tab === 'search' && (
-        <Section title="Find vehicle" subtitle="Search and reserve">
-          <div className="panel stack-12">
-            <div className="row wrap gap-8">
-              {['all', 'scooter', 'bike'].map((type) => (
-                <button key={type} className={`btn ${vehicleType === type ? 'btn-primary-soft' : 'btn-soft'}`} onClick={() => setVehicleType(type)}>
-                  {type}
-                </button>
-              ))}
-            </div>
-
-            <label>
-              Radius (km)
-              <input value={radius} onChange={(e) => setRadius(e.target.value)} />
-            </label>
-          </div>
-           <VehicleMap
-  vehicles={vehicles}
-  onReserve={onReserveVehicle}
-  reservation={reservation}
-  activeRental={activeRental}
-/>
-
-
-          <div className="grid-2">
-            {vehicles.map((vehicle) => (
-              <Card
-                key={vehicle.id}
-                title={vehicle.name}
-                text={`${vehicle.type} | ${vehicle.distance} km away | $${vehicle.ratePerMin}/min`}
-                action={<button className="btn btn-primary" disabled={hasOpenVehicleFlow || vehicle.status !== 'available'} onClick={() => onReserveVehicle(vehicle)}>Reserve</button>}
-              />
-            ))}
-          </div>
-
-          {reservation && (
-            <div className="panel stack-12">
-              <h3>Reservation</h3>
-              <p>{reservation.vehicle?.name || `Vehicle #${reservation.vehicleId}`} | ${reservation.vehicle?.ratePerMin ?? 0.25}/min</p>
-              <div className="row gap-8">
-                <button className="btn btn-primary" onClick={onProceedPayment}>Proceed to payment</button>
-                <button className="btn btn-soft" onClick={onCancelReservation}>Cancel</button>
+      {tab === 'parking' && (
+        <Section title="Parking" subtitle="Find and reserve parking spots">
+          {parkingReservation && (
+            <div className="status-panel fade-up" style={{ borderColor: parkingReservation.status === 'active' ? 'rgba(90,228,167,0.3)' : 'rgba(228,169,77,0.3)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3>{parkingReservation.spot?.address || 'Parking Spot'}</h3>
+                <span className={`status-pill ${parkingReservation.status === 'active' ? 'is-active' : 'is-reserved'}`}>
+                  {parkingReservation.status}
+                </span>
+              </div>
+              <div className="vehicle-card-meta">
+                <span>{parkingReservation.durationHours}h reserved</span>
+                <span>Est. ${parkingReservation.estimatedCost}</span>
+              </div>
+              {parkingReservation.status === 'reserved' && (
+                <div className="row wrap gap-8">
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ color: 'var(--text-3)', fontSize: '0.84rem', whiteSpace: 'nowrap' }}>Duration</span>
+                    <input value={parkingDuration} onChange={(e) => setParkingDuration(e.target.value)} style={{ width: 60, textAlign: 'center' }} />
+                    <span style={{ color: 'var(--text-3)', fontSize: '0.84rem' }}>hrs</span>
+                  </label>
+                  <button className="btn btn-soft" onClick={onUpdateParkingDuration}>Update</button>
+                </div>
+              )}
+              <div className="row wrap gap-8">
+                {parkingReservation.status === 'reserved' && (
+                  <button className="btn btn-primary" onClick={onStartParking}>Start Parking</button>
+                )}
+                {parkingReservation.status === 'active' && (
+                  <button className="btn btn-primary" onClick={onCompleteParking}>Complete &amp; Pay</button>
+                )}
+                <button className="btn btn-soft" onClick={onCancelParking}>Cancel</button>
               </div>
             </div>
           )}
-        </Section>
-      )}
 
-      {tab === 'transit' && (
-        <Section title="Public transit" subtitle="Google Maps routing, route overlays, and trip planning">
-          <div className="panel stack-12">
-            <h3>Plan your trip</h3>
-            <div className="row wrap gap-8">
-              <label style={{ flex: 1, minWidth: 220 }}>
-                From
-                <input value={transitFrom} onChange={(e) => setTransitFrom(e.target.value)} placeholder="Type an address or place" />
-              </label>
-              <label style={{ flex: 1, minWidth: 220 }}>
-                To
-                <input value={transitTo} onChange={(e) => setTransitTo(e.target.value)} placeholder="Type an address or place" />
-              </label>
-              <label style={{ minWidth: 180 }}>
-                Travel mode
-                <select value={transitTravelMode} onChange={(e) => onSetTransitTravelMode(e.target.value)}>
-                  <option value="TRANSIT">Transit</option>
-                  <option value="DRIVING">Driving</option>
-                  <option value="WALKING">Walking</option>
-                  <option value="BICYCLING">Bicycling</option>
-                </select>
-              </label>
+          {!parkingReservation && (
+            <div className="panel stack-12">
+              <div className="row wrap gap-8" style={{ alignItems: 'center' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ color: 'var(--text-3)', fontSize: '0.84rem' }}>Reserve for</span>
+                  <input value={parkingDuration} onChange={(e) => setParkingDuration(e.target.value)} style={{ width: 60, textAlign: 'center' }} />
+                  <span style={{ color: 'var(--text-3)', fontSize: '0.84rem' }}>hours</span>
+                </label>
+              </div>
             </div>
-            <div className="row wrap gap-8">
-              <button
-                className="btn btn-primary"
-                disabled={!selectedTransitRoute}
-                onClick={() => selectedTransitRoute && onPlanTransit(selectedTransitRoute)}
-              >
-                {selectedTransitRoute ? `Plan ${selectedTransitRoute.line}` : 'Select a route on the map'}
-              </button>
-              <button
-                className="btn btn-soft"
-                disabled={!selectedTransitRoute}
-                onClick={onUseSelectedRouteEndpoints}
-              >
-                Use selected route endpoints
-              </button>
-              <button
-                className="btn btn-primary-soft"
-                disabled={!transitStartPoint || !transitEndPoint}
-                onClick={onPlanTransitFromMap}
-              >
-                Save map route plan
-              </button>
-            </div>
-            {transitRouteInfo && (
-              <p>
-                Google route preview: {transitRouteInfo.distanceText || 'N/A'} in {transitRouteInfo.durationText || 'N/A'} ({transitTravelMode.toLowerCase()}).
-              </p>
-            )}
-          </div>
+          )}
 
-          <TransitMap
-            routes={transitRoutes}
-            selectedRouteId={selectedTransitRoute?.id}
-            onSelectRoute={onSelectTransitRoute}
-            startPoint={transitStartPoint}
-            endPoint={transitEndPoint}
-            onSetStartPoint={onSetTransitStartPoint}
-            onSetEndPoint={onSetTransitEndPoint}
-            transitFrom={transitFrom}
-            transitTo={transitTo}
-            onSetTransitFrom={setTransitFrom}
-            onSetTransitTo={setTransitTo}
-            travelMode={transitTravelMode}
-            onRouteInfoChange={onTransitRouteInfoChange}
-          />
+          <ParkingMap spots={parkingSpots} onReserve={onReserveParking} parkingReservation={parkingReservation} />
 
           <div className="grid-2">
-            {transitRoutes.map((route) => {
-              const selected = String(route.id) === String(selectedTransitRoute?.id);
+            {parkingSpots.map((spot) => {
+              const pct = spot.total > 0 ? Math.round(((spot.total - spot.available) / spot.total) * 100) : 0;
               return (
-                <div key={route.id} className="card stack-8" style={selected ? { borderColor: 'var(--primary)' } : undefined}>
-                  <h3>{route.line}</h3>
-                  <p>{route.from} {'->'} {route.to}</p>
-                  <p>Next departure: {route.nextDeparture}</p>
-                  <p>Delay: {route.delay} min</p>
-                  <div className="row gap-8 wrap">
-                    <button className={`btn ${selected ? 'btn-primary-soft' : 'btn-soft'}`} onClick={() => onSelectTransitRoute(route.id)}>
-                      {selected ? 'Selected' : 'Preview on map'}
-                    </button>
-                    <button className="btn btn-primary" onClick={() => onPlanTransit(route)}>
-                      Save route plan
-                    </button>
+                <div className="vehicle-card" key={spot.id}>
+                  <h3>{spot.address}</h3>
+                  <div className="vehicle-card-meta">
+                    <span>{spot.available}/{spot.total} available</span>
+                    <span>{spot.distance} km</span>
+                    <span>${(spot.pricePerHour ?? 2.5)}/h</span>
                   </div>
+                  <div style={{ width: '100%', height: 6, borderRadius: 99, background: 'var(--surface-alt)', overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${pct}%`, borderRadius: 99, background: pct > 85 ? 'var(--error)' : pct > 60 ? 'var(--warning)' : 'var(--success)', transition: 'width 0.3s' }} />
+                  </div>
+                  <button className="btn btn-primary" disabled={spot.available <= 0 || Boolean(parkingReservation)} onClick={() => onReserveParking(spot)} style={{ marginTop: 4 }}>
+                    Reserve
+                  </button>
                 </div>
               );
             })}
           </div>
-
-          <div className="panel stack-12">
-            <h3>Your latest transit plans</h3>
-            {transitPlans.length === 0 && <p>No transit plans yet. Use the map and save a route.</p>}
-            {transitPlans.length > 0 && (
-              <div className="stack-8">
-                {transitPlans.map((plan) => (
-                  <div key={plan.id} className="card">
-                    <p><strong>{plan.from}</strong> {'->'} <strong>{plan.to}</strong></p>
-                    <p>{plan.notes || `Route #${plan.routeId}`}</p>
-                    <p>Planned at: {new Date(plan.plannedAt).toLocaleString()}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
         </Section>
       )}
 
-      {tab === 'parking' && (
-        <Section title="Parking" subtitle="Available spaces nearby">
-          <div className="panel stack-12">
-            <h3>Parking reservation</h3>
-            {(!parkingReservation || parkingReservation.status === 'reserved') && (
-              <label>
-                Duration (hours)
-                <input value={parkingDuration} onChange={(e) => setParkingDuration(e.target.value)} />
-              </label>
-            )}
-            {parkingReservation && (
-              <div className="stack-8">
-                <p>Reserved spot: {parkingReservation.spot?.address || parkingReservation.spotId}</p>
-                <p>Status: {parkingReservation.status}</p>
-                <p>Duration: {parkingReservation.durationHours}h</p>
-                <p>Estimated cost: ${parkingReservation.estimatedCost}</p>
-                {parkingReservation.status === 'reserved' && (
-                  <button className="btn btn-soft" onClick={onUpdateParkingDuration}>Update duration</button>
-                )}
-                {parkingReservation.status === 'reserved' && (
-                  <button className="btn btn-primary" onClick={onStartParking}>Start parking session</button>
-                )}
-                {parkingReservation.status === 'active' && (
-                  <button className="btn btn-primary" onClick={onCompleteParking}>Complete parking</button>
-                )}
-                <button className="btn btn-soft" onClick={onCancelParking}>Cancel reservation</button>
-              </div>
-            )}
-          </div>
-            <ParkingMap
-                  spots={parkingSpots}
-                  onReserve={onReserveParking}
-                   parkingReservation={parkingReservation}
-                />
+      {tab === 'transit' && <TransitStatusPage />}
 
-          <div className="grid-2">
-            {parkingSpots.map((spot) => (
-              <Card
-                key={spot.id}
-                title={spot.address}
-                text={`${spot.available}/${spot.total} spots | ${spot.distance} km | $${(spot.pricePerHour ?? 2.5)}/h`}
-                action={<button className="btn btn-primary" disabled={spot.available <= 0 || Boolean(parkingReservation)} onClick={() => onReserveParking(spot)}>Reserve spot</button>}
-              />
-            ))}
-          </div>
-        </Section>
-      )}
+      {tab === 'analytics' && <AnalyticsPage vehiclesData={vehiclesData} parkingSpots={parkingSpots} />}
 
       {tab === 'activeRental' && (
-        <Section title="Active rental" subtitle="Track or return your vehicle">
+        <Section title="Active Rental" subtitle="Track or return your vehicle">
+          <RentalStepIndicator reservation={reservation} activeRental={activeRental} paymentDone={paymentDone} />
+
           {!activeRental && reservation && (
-            <div className="panel stack-12">
-              <h3>Reservation ready</h3>
-              <p>{reservation.vehicle?.name || `Vehicle #${reservation.vehicleId}`}</p>
-              <p>{reservation.vehicle?.type || 'vehicle'}</p>
-              <button className="btn btn-primary" onClick={onProceedPayment}>Start rental now</button>
+            <div className="status-panel fade-up" style={{ borderColor: 'rgba(228,169,77,0.3)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3>Ready to ride</h3>
+                <span className="status-pill is-reserved">Reserved</span>
+              </div>
+              <p style={{ color: 'var(--text-2)' }}>{reservation.vehicle?.name || `Vehicle #${reservation.vehicleId}`} &mdash; {reservation.vehicle?.type || 'vehicle'}</p>
+              <p style={{ color: 'var(--text-3)', fontSize: '0.85rem' }}>Tap below to confirm payment and start your rental.</p>
+              <button className="btn btn-primary" style={{ width: 'fit-content' }} onClick={onProceedPayment}>Confirm &amp; Start Rental</button>
             </div>
           )}
 
-          {!activeRental && !reservation && !paymentDone && <div className="panel">No active rental.</div>}
+          {!activeRental && !reservation && !paymentDone && (
+            <div className="panel fade-up" style={{ textAlign: 'center', padding: '40px 20px' }}>
+              <p style={{ color: 'var(--text-3)', marginBottom: 12 }}>No active rental right now.</p>
+              <button className="btn btn-primary" onClick={() => onSelectTab('mobility')}>Find a Vehicle</button>
+            </div>
+          )}
 
           {activeRental && (
-            <div className="panel stack-12">
-              <h3>{activeRental.vehicle?.name}</h3>
-              <p>{activeRental.vehicle?.type}</p>
-              <p>Started: {new Date(activeRental.startTime).toLocaleTimeString()}</p>
-              <button className="btn btn-primary" onClick={onReturnVehicle}>Return vehicle</button>
+            <div className="status-panel fade-up" style={{ borderColor: 'rgba(90,228,167,0.3)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3>{activeRental.vehicle?.name}</h3>
+                <span className="status-pill is-active">In Progress</span>
+              </div>
+              <div className="vehicle-card-meta">
+                <span>{activeRental.vehicle?.type}</span>
+                <span>Started {new Date(activeRental.startTime).toLocaleTimeString()}</span>
+                <span>${activeRental.vehicle?.ratePerMin ?? 0.25}/min</span>
+              </div>
+              <button className="btn btn-primary" style={{ width: 'fit-content' }} onClick={onReturnVehicle}>Return Vehicle &amp; Complete</button>
             </div>
           )}
 
-          {paymentDone && <div className="panel success">Rental complete. Receipt recorded.</div>}
+          {paymentDone && (
+            <div className="status-panel fade-up" style={{ borderColor: 'rgba(90,228,167,0.35)', background: 'var(--success-dim)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span className="status-pill is-completed">Completed</span>
+                <h3 style={{ color: 'var(--success)' }}>Rental complete</h3>
+              </div>
+              <p style={{ color: 'var(--text-2)' }}>Your receipt has been recorded. Thank you for riding with SUMMS.</p>
+              <button className="btn btn-soft" style={{ width: 'fit-content' }} onClick={() => onSelectTab('mobility')}>Start another rental</button>
+            </div>
+          )}
         </Section>
       )}
     </>
+  );
+}
+
+/* ─── Dashboard Page (map-centric home) ─── */
+function DashboardPage({ user, onSelectTab, reservation, activeRental, vehiclesData, parkingSpots }) {
+  const [bixiStations, setBixiStations] = useState([]);
+  const [bixiStats, setBixiStats] = useState(null);
+  const [stmStatus, setStmStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    async function load() {
+      try {
+        const [stations, stm] = await Promise.all([
+          fetchBixiStations(),
+          fetchStmStatus(),
+        ]);
+        if (!mounted) return;
+        setBixiStations(stations);
+        setBixiStats(getBixiStats(stations));
+        setStmStatus(stm);
+      } catch (err) {
+        console.warn('Dashboard data load error:', err.message);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    load();
+    const interval = setInterval(load, 30000);
+    return () => { mounted = false; clearInterval(interval); };
+  }, []);
+
+  const scootersAvailable = vehiclesData.filter(v => v.type === 'scooter' && (v.available || v.status === 'available')).length;
+  const bikesAvailable = vehiclesData.filter(v => v.type === 'bike' && (v.available || v.status === 'available')).length;
+  const totalParkingAvailable = parkingSpots.reduce((s, p) => s + (p.available || 0), 0);
+
+  // STM alerts banner
+  const disruptedLines = stmStatus?.lines?.filter(l => l.status === 'disrupted') || [];
+
+  return (
+    <Section title={`Welcome back${user?.name ? ', ' + user.name.split(' ')[0] : ''}`} subtitle="Your mobility dashboard">
+      <RecommendationBanner user={user} onSelectTab={onSelectTab} />
+
+      {/* STM Alert Banner */}
+      {disruptedLines.length > 0 && (
+        <div className="panel fade-up" style={{ borderColor: 'rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.08)' }}>
+          <h3 style={{ color: 'var(--error)', margin: '0 0 6px' }}>STM Service Disruptions</h3>
+          {disruptedLines.map(line => (
+            <p key={line.id} style={{ color: 'var(--text-2)', margin: '2px 0' }}>
+              <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 3, background: line.color, marginRight: 8, verticalAlign: 'middle' }} />
+              {line.name} &mdash; disrupted
+            </p>
+          ))}
+          <button className="btn btn-soft" style={{ marginTop: 8, width: 'fit-content' }} onClick={() => onSelectTab('transit')}>View details</button>
+        </div>
+      )}
+
+      {/* Quick Stats */}
+      <div className="stat-row fade-up">
+        <div className="stat-badge">
+          <div className="stat-badge-value">{bixiStats?.totalBikes ?? '...'}</div>
+          <div className="stat-badge-label">BIXI Bikes</div>
+        </div>
+        <div className="stat-badge">
+          <div className="stat-badge-value">{scootersAvailable}</div>
+          <div className="stat-badge-label">Scooters</div>
+        </div>
+        <div className="stat-badge">
+          <div className="stat-badge-value">{totalParkingAvailable}</div>
+          <div className="stat-badge-label">Parking Spots</div>
+        </div>
+        <div className="stat-badge">
+          <div className="stat-badge-value">{bixiStats?.totalStations ?? '...'}</div>
+          <div className="stat-badge-label">BIXI Stations</div>
+        </div>
+      </div>
+
+      {/* Active reservation/rental banner */}
+      {(reservation || activeRental) && (
+        <div className="status-panel fade-up">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3>{activeRental ? 'Rental in progress' : 'Reservation pending'}</h3>
+            <span className={`status-pill ${activeRental ? 'is-active' : 'is-reserved'}`}>
+              {activeRental ? 'Active' : 'Reserved'}
+            </span>
+          </div>
+          <p style={{ color: 'var(--text-2)' }}>{(activeRental?.vehicle?.name || reservation?.vehicle?.name) || 'Vehicle'} &mdash; {activeRental?.vehicle?.type || reservation?.vehicle?.type}</p>
+          <button className="btn btn-primary" style={{ width: 'fit-content' }} onClick={() => onSelectTab('activeRental')}>
+            {activeRental ? 'Return vehicle' : 'Continue to payment'}
+          </button>
+        </div>
+      )}
+
+      {/* Map with BIXI stations */}
+      {!loading && bixiStations.length > 0 && (
+        <div className="panel fade-up" style={{ padding: 0, overflow: 'hidden', borderRadius: 16 }}>
+          <VehicleMap vehicles={vehiclesData} bixiStations={bixiStations} />
+        </div>
+      )}
+
+      {/* Quick Actions */}
+      <div className="grid-2">
+        <div className="quick-action fade-up fade-up-1" onClick={() => onSelectTab('mobility')}>
+          <h3>Find a Vehicle</h3>
+          <p>BIXI bikes, scooters — locate and reserve instantly</p>
+        </div>
+        <div className="quick-action fade-up fade-up-2" onClick={() => onSelectTab('transit')}>
+          <h3>Metro Status</h3>
+          <p>Real-time STM metro line service status</p>
+        </div>
+        <div className="quick-action fade-up fade-up-3" onClick={() => onSelectTab('parking')}>
+          <h3>Parking</h3>
+          <p>Find and reserve available parking spots</p>
+        </div>
+        <div className="quick-action fade-up fade-up-4" onClick={() => onSelectTab('analytics')}>
+          <h3>Analytics</h3>
+          <p>Usage stats, BIXI data, and mobility trends</p>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+/* ─── Mobility Page (BIXI + scooters) ─── */
+function MobilityPage({ user, vehicleType, setVehicleType, radius, setRadius, vehicles, reservation, activeRental, hasOpenVehicleFlow, paymentDone, onReserveVehicle, onCancelReservation, onProceedPayment, onSelectTab }) {
+  const [bixiStations, setBixiStations] = useState([]);
+  const [bixiStats, setBixiStats] = useState(null);
+  const [bixiLoading, setBixiLoading] = useState(true);
+  const [showBixi, setShowBixi] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    fetchBixiStations().then(stations => {
+      if (!mounted) return;
+      setBixiStations(stations);
+      setBixiStats(getBixiStats(stations));
+      setBixiLoading(false);
+    }).catch(() => { if (mounted) setBixiLoading(false); });
+    return () => { mounted = false; };
+  }, []);
+
+  return (
+    <Section title="Mobility" subtitle="BIXI bikes and scooter rentals">
+      <RentalStepIndicator reservation={reservation} activeRental={activeRental} paymentDone={paymentDone} />
+
+      {/* BIXI Stats Banner */}
+      {bixiStats && (
+        <div className="stat-row fade-up">
+          <div className="stat-badge">
+            <div className="stat-badge-value">{bixiStats.totalStations}</div>
+            <div className="stat-badge-label">BIXI Stations</div>
+          </div>
+          <div className="stat-badge">
+            <div className="stat-badge-value">{bixiStats.totalBikes}</div>
+            <div className="stat-badge-label">Bikes Available</div>
+          </div>
+          <div className="stat-badge">
+            <div className="stat-badge-value">{bixiStats.totalEbikes}</div>
+            <div className="stat-badge-label">E-Bikes</div>
+          </div>
+          <div className="stat-badge">
+            <div className="stat-badge-value">{bixiStats.utilizationPct}%</div>
+            <div className="stat-badge-label">Utilization</div>
+          </div>
+        </div>
+      )}
+
+      {/* Toggle + Filters */}
+      <div className="panel stack-12">
+        <div className="row wrap gap-8">
+          <button className={`btn ${showBixi ? 'btn-primary-soft' : 'btn-soft'}`} onClick={() => setShowBixi(true)}>BIXI Stations</button>
+          <button className={`btn ${!showBixi ? 'btn-primary-soft' : 'btn-soft'}`} onClick={() => setShowBixi(false)}>Scooters &amp; Bikes</button>
+        </div>
+
+        {!showBixi && (
+          <div className="row wrap gap-8">
+            {['all', 'scooter', 'bike'].map((type) => (
+              <button key={type} className={`btn ${vehicleType === type ? 'btn-primary-soft' : 'btn-soft'}`} onClick={() => setVehicleType(type)}>
+                {type === 'all' ? 'All types' : type.charAt(0).toUpperCase() + type.slice(1)}
+              </button>
+            ))}
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+              <span style={{ color: 'var(--text-3)', fontSize: '0.84rem' }}>Radius</span>
+              <input value={radius} onChange={(e) => setRadius(e.target.value)} style={{ width: 70, textAlign: 'center' }} />
+              <span style={{ color: 'var(--text-3)', fontSize: '0.84rem' }}>km</span>
+            </label>
+          </div>
+        )}
+      </div>
+
+      {/* Map */}
+      <VehicleMap vehicles={showBixi ? [] : vehicles} bixiStations={showBixi ? bixiStations : []} onReserve={showBixi ? undefined : onReserveVehicle} reservation={reservation} activeRental={activeRental} />
+
+      {/* Reservation status */}
+      {reservation && (
+        <div className="status-panel fade-up" style={{ borderColor: 'rgba(228,169,77,0.3)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3>Reserved: {reservation.vehicle?.name || `Vehicle #${reservation.vehicleId}`}</h3>
+            <span className="status-pill is-reserved">Reserved</span>
+          </div>
+          <p style={{ color: 'var(--text-2)' }}>{reservation.vehicle?.type} &mdash; ${reservation.vehicle?.ratePerMin ?? 0.25}/min</p>
+          <div className="row gap-8">
+            <button className="btn btn-primary" onClick={onProceedPayment}>Confirm &amp; Start Rental</button>
+            <button className="btn btn-soft" onClick={onCancelReservation}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* BIXI Station List */}
+      {showBixi && !bixiLoading && (
+        <div className="grid-2">
+          {bixiStations.slice(0, 20).map((station) => (
+            <div className="vehicle-card" key={station.id}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
+                <h3 style={{ fontSize: '0.92rem' }}>{station.name}</h3>
+                <span className="vehicle-card-type">BIXI</span>
+              </div>
+              <div className="vehicle-card-meta">
+                <span>{station.bikesAvailable} bikes</span>
+                <span>{station.ebikesAvailable} e-bikes</span>
+                <span>{station.docksAvailable} docks free</span>
+              </div>
+              <div style={{ width: '100%', height: 5, borderRadius: 99, background: 'var(--surface-alt)', overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${station.capacity > 0 ? Math.round(((station.capacity - station.docksAvailable) / station.capacity) * 100) : 0}%`, borderRadius: 99, background: 'var(--accent)', transition: 'width 0.3s' }} />
+              </div>
+            </div>
+          ))}
+          {bixiStations.length > 20 && (
+            <div className="panel" style={{ gridColumn: '1 / -1', textAlign: 'center' }}>
+              <p style={{ color: 'var(--text-3)' }}>Showing 20 of {bixiStations.length} stations</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Scooter/Bike List */}
+      {!showBixi && !reservation && (
+        <div className="grid-2">
+          {vehicles.map((vehicle) => (
+            <div className="vehicle-card" key={vehicle.id}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
+                <h3>{vehicle.name}</h3>
+                <span className="vehicle-card-type">{vehicle.type}</span>
+              </div>
+              <div className="vehicle-card-meta">
+                <span>{vehicle.distance} km away</span>
+                <span>${vehicle.ratePerMin}/min</span>
+              </div>
+              <button className="btn btn-primary" disabled={hasOpenVehicleFlow || vehicle.status !== 'available'} onClick={() => onReserveVehicle(vehicle)} style={{ marginTop: 4 }}>
+                Reserve
+              </button>
+            </div>
+          ))}
+          {vehicles.length === 0 && <div className="panel"><p style={{ color: 'var(--text-3)' }}>No vehicles match your filters.</p></div>}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+/* ─── Transit Status Page (STM metro status) ─── */
+function TransitStatusPage() {
+  const [stmData, setStmData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    async function load() {
+      try {
+        const data = await fetchStmStatus();
+        if (mounted) setStmData(data);
+      } catch (err) {
+        console.warn('STM status error:', err.message);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    load();
+    const interval = setInterval(load, 60000);
+    return () => { mounted = false; clearInterval(interval); };
+  }, []);
+
+  const lines = stmData?.lines || [];
+  const normalCount = lines.filter(l => l.status === 'normal').length;
+  const disruptedCount = lines.filter(l => l.status === 'disrupted').length;
+
+  return (
+    <Section title="Transit" subtitle="STM Metro Service Status">
+      {loading && <div className="panel">Loading STM service status...</div>}
+
+      {!loading && (
+        <>
+          {/* Summary stats */}
+          <div className="stat-row fade-up">
+            <div className="stat-badge">
+              <div className="stat-badge-value">{lines.length}</div>
+              <div className="stat-badge-label">Metro Lines</div>
+            </div>
+            <div className="stat-badge">
+              <div className="stat-badge-value" style={{ color: 'var(--success)' }}>{normalCount}</div>
+              <div className="stat-badge-label">Normal Service</div>
+            </div>
+            <div className="stat-badge">
+              <div className="stat-badge-value" style={{ color: disruptedCount > 0 ? 'var(--error)' : 'var(--text-3)' }}>{disruptedCount}</div>
+              <div className="stat-badge-label">Disrupted</div>
+            </div>
+            <div className="stat-badge">
+              <div className="stat-badge-value" style={{ fontSize: '0.7rem' }}>{stmData?.source || '...'}</div>
+              <div className="stat-badge-label">Source</div>
+            </div>
+          </div>
+
+          {/* Line cards */}
+          <div className="grid-2">
+            {lines.map((line) => (
+              <div key={line.id} className="vehicle-card fade-up" style={{ borderLeft: `4px solid ${line.color}` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ display: 'inline-block', width: 14, height: 14, borderRadius: 4, background: line.color }} />
+                    {line.name}
+                  </h3>
+                  <span className={`status-pill ${line.status === 'normal' ? 'is-active' : line.status === 'disrupted' ? 'is-reserved' : ''}`}>
+                    {line.status === 'normal' ? 'Normal' : line.status === 'disrupted' ? 'Disrupted' : 'Unknown'}
+                  </span>
+                </div>
+                {line.alerts.length > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    {line.alerts.map((alert, i) => (
+                      <p key={i} style={{ color: 'var(--text-3)', fontSize: '0.84rem', margin: '4px 0' }}>{typeof alert === 'string' ? alert.slice(0, 200) : 'Service alert'}</p>
+                    ))}
+                  </div>
+                )}
+                {line.status === 'normal' && line.alerts.length === 0 && (
+                  <p style={{ color: 'var(--success)', fontSize: '0.84rem', marginTop: 6 }}>Service running normally</p>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Raw alerts section */}
+          {stmData?.rawAlerts?.length > 0 && (
+            <div className="panel stack-8">
+              <h3>All Service Messages ({stmData.rawAlerts.length})</h3>
+              {stmData.rawAlerts.slice(0, 10).map((alert, i) => (
+                <div key={i} className="card" style={{ fontSize: '0.85rem' }}>
+                  <p style={{ color: 'var(--text-2)', margin: 0 }}>{typeof alert === 'string' ? alert : JSON.stringify(alert).slice(0, 300)}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <p style={{ color: 'var(--text-3)', fontSize: '0.78rem', textAlign: 'center' }}>
+            Last updated: {stmData?.updatedAt ? new Date(stmData.updatedAt).toLocaleTimeString() : 'N/A'} &mdash; Auto-refreshes every 60s
+          </p>
+        </>
+      )}
+    </Section>
+  );
+}
+
+/* ─── Analytics Page ─── */
+function AnalyticsPage({ vehiclesData, parkingSpots }) {
+  const [bixiStats, setBixiStats] = useState(null);
+  const [bixiStations, setBixiStations] = useState([]);
+  const [rentalStats, setRentalStats] = useState({ total: 0, active: 0, completed: 0, revenue: 0 });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    async function load() {
+      try {
+        const stations = await fetchBixiStations();
+        if (!mounted) return;
+        setBixiStations(stations);
+        setBixiStats(getBixiStats(stations));
+
+        // Fetch rental stats from Supabase
+        const { data: rentals } = await supabase.from('rentals').select('*');
+        if (!mounted) return;
+        if (rentals) {
+          setRentalStats({
+            total: rentals.length,
+            active: rentals.filter(r => r.status === 'active').length,
+            completed: rentals.filter(r => r.status === 'completed').length,
+            revenue: rentals.reduce((s, r) => s + (Number(r.price) || 0), 0),
+          });
+        }
+      } catch (err) {
+        console.warn('Analytics load error:', err.message);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    load();
+    return () => { mounted = false; };
+  }, []);
+
+  const scooterCount = vehiclesData.filter(v => v.type === 'scooter').length;
+  const bikeCount = vehiclesData.filter(v => v.type === 'bike').length;
+  const availableVehicles = vehiclesData.filter(v => v.available || v.status === 'available').length;
+  const totalParkingSpots = parkingSpots.reduce((s, p) => s + (p.total || 0), 0);
+  const availableParking = parkingSpots.reduce((s, p) => s + (p.available || 0), 0);
+  const parkingUtilization = totalParkingSpots > 0 ? Math.round(((totalParkingSpots - availableParking) / totalParkingSpots) * 100) : 0;
+
+  // City breakdown from vehicle locations
+  const cityMap = {};
+  vehiclesData.forEach(v => {
+    const city = (v.location || 'Unknown').split(' ').pop() || 'Unknown';
+    if (!cityMap[city]) cityMap[city] = { vehicles: 0, available: 0 };
+    cityMap[city].vehicles++;
+    if (v.available || v.status === 'available') cityMap[city].available++;
+  });
+
+  // Top BIXI stations by usage
+  const topStations = [...bixiStations]
+    .sort((a, b) => (b.capacity - b.docksAvailable) - (a.capacity - a.docksAvailable))
+    .slice(0, 5);
+
+  return (
+    <Section title="Analytics" subtitle="Mobility usage statistics and trends">
+      {loading && <div className="panel">Loading analytics...</div>}
+
+      {!loading && (
+        <>
+          {/* Key Metrics */}
+          <div className="stat-row fade-up">
+            <div className="stat-badge">
+              <div className="stat-badge-value">{rentalStats.total}</div>
+              <div className="stat-badge-label">Total Rentals</div>
+            </div>
+            <div className="stat-badge">
+              <div className="stat-badge-value">{rentalStats.active}</div>
+              <div className="stat-badge-label">Active Now</div>
+            </div>
+            <div className="stat-badge">
+              <div className="stat-badge-value">${rentalStats.revenue.toFixed(2)}</div>
+              <div className="stat-badge-label">Revenue</div>
+            </div>
+            <div className="stat-badge">
+              <div className="stat-badge-value">{bixiStats?.totalStations ?? 0}</div>
+              <div className="stat-badge-label">BIXI Stations</div>
+            </div>
+          </div>
+
+          {/* Vehicle Type Distribution Chart (bar chart) */}
+          <div className="panel stack-12 fade-up">
+            <h3>Vehicle Distribution</h3>
+            <div style={{ display: 'grid', gap: 12 }}>
+              <ChartBar label="Scooters" value={scooterCount} max={Math.max(scooterCount, bikeCount, bixiStats?.totalBikes || 0)} color="var(--accent)" />
+              <ChartBar label="Bikes" value={bikeCount} max={Math.max(scooterCount, bikeCount, bixiStats?.totalBikes || 0)} color="var(--success)" />
+              <ChartBar label="BIXI Bikes" value={bixiStats?.totalBikes || 0} max={Math.max(scooterCount, bikeCount, bixiStats?.totalBikes || 0)} color="#FF6B6B" />
+              <ChartBar label="BIXI E-Bikes" value={bixiStats?.totalEbikes || 0} max={Math.max(scooterCount, bikeCount, bixiStats?.totalBikes || 0)} color="#4ECDC4" />
+            </div>
+          </div>
+
+          {/* Parking Utilization Chart */}
+          <div className="panel stack-12 fade-up">
+            <h3>Parking Utilization</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+              <div style={{ position: 'relative', width: 120, height: 120, flexShrink: 0 }}>
+                <svg viewBox="0 0 36 36" style={{ width: '100%', height: '100%', transform: 'rotate(-90deg)' }}>
+                  <path d="M18 2.0845a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="var(--surface-alt)" strokeWidth="3" />
+                  <path d="M18 2.0845a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                    fill="none" stroke={parkingUtilization > 80 ? 'var(--error)' : parkingUtilization > 50 ? 'var(--warning)' : 'var(--success)'}
+                    strokeWidth="3" strokeDasharray={`${parkingUtilization}, 100`} strokeLinecap="round" />
+                </svg>
+                <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center' }}>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--text)', fontFamily: 'var(--font-display)' }}>{parkingUtilization}%</div>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-3)' }}>utilized</div>
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'grid', gap: 6 }}>
+                <p style={{ margin: 0, color: 'var(--text-2)' }}><strong>{availableParking}</strong> spots available of <strong>{totalParkingSpots}</strong> total</p>
+                <p style={{ margin: 0, color: 'var(--text-3)', fontSize: '0.85rem' }}>{parkingSpots.length} parking locations tracked</p>
+              </div>
+            </div>
+          </div>
+
+          {/* BIXI Utilization */}
+          {bixiStats && (
+            <div className="panel stack-12 fade-up">
+              <h3>BIXI Network</h3>
+              <div style={{ display: 'grid', gap: 12 }}>
+                <ChartBar label="Stations with bikes" value={bixiStats.stationsWithBikes} max={bixiStats.totalStations} color="var(--accent)" />
+                <ChartBar label="Empty stations" value={bixiStats.totalStations - bixiStats.stationsWithBikes} max={bixiStats.totalStations} color="var(--error)" />
+                <ChartBar label="Network utilization" value={bixiStats.utilizationPct} max={100} color="var(--success)" suffix="%" />
+              </div>
+            </div>
+          )}
+
+          {/* Usage by City */}
+          {Object.keys(cityMap).length > 0 && (
+            <div className="panel stack-12 fade-up">
+              <h3>Usage by City</h3>
+              <div className="grid-2">
+                {Object.entries(cityMap).map(([city, data]) => (
+                  <div key={city} className="card">
+                    <h3>{city}</h3>
+                    <div className="vehicle-card-meta">
+                      <span>{data.vehicles} vehicles</span>
+                      <span>{data.available} available</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Top BIXI Stations */}
+          {topStations.length > 0 && (
+            <div className="panel stack-12 fade-up">
+              <h3>Top BIXI Stations (by usage)</h3>
+              <div style={{ display: 'grid', gap: 8 }}>
+                {topStations.map((s, i) => {
+                  const used = s.capacity - s.docksAvailable;
+                  return (
+                    <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <span style={{ color: 'var(--text-3)', width: 20, textAlign: 'right', fontSize: '0.84rem' }}>#{i + 1}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name}</p>
+                        <div style={{ width: '100%', height: 5, borderRadius: 99, background: 'var(--surface-alt)', marginTop: 4 }}>
+                          <div style={{ height: '100%', width: `${s.capacity > 0 ? Math.round((used / s.capacity) * 100) : 0}%`, borderRadius: 99, background: 'var(--accent)', transition: 'width 0.3s' }} />
+                        </div>
+                      </div>
+                      <span style={{ color: 'var(--text-2)', fontSize: '0.82rem', whiteSpace: 'nowrap' }}>{used}/{s.capacity}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </Section>
+  );
+}
+
+function ChartBar({ label, value, max, color, suffix = '' }) {
+  const pct = max > 0 ? Math.round((value / max) * 100) : 0;
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+        <span style={{ color: 'var(--text-2)', fontSize: '0.84rem' }}>{label}</span>
+        <span style={{ color: 'var(--text)', fontSize: '0.84rem', fontWeight: 600 }}>{value}{suffix}</span>
+      </div>
+      <div style={{ width: '100%', height: 8, borderRadius: 99, background: 'var(--surface-alt)', overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${pct}%`, borderRadius: 99, background: color, transition: 'width 0.5s ease' }} />
+      </div>
+    </div>
   );
 }
 
@@ -837,8 +1500,25 @@ function ProviderViews({ tab, vehiclesData, providerRentals }) {
   return (
     <>
       {tab === 'home' && (
-        <Section title="Provider dashboard" subtitle="Manage vehicles and rentals">
-          <Card title="SUMMS Management" text="Manage your fleet and review rental data." />
+        <Section title="Fleet Overview" subtitle="Manage your vehicles and track rental performance">
+          <div className="stat-row fade-up">
+            <div className="stat-badge">
+              <div className="stat-badge-value">{vehiclesData.length}</div>
+              <div className="stat-badge-label">Total Vehicles</div>
+            </div>
+            <div className="stat-badge">
+              <div className="stat-badge-value">{vehiclesData.filter(v => v.available || v.status === 'available').length}</div>
+              <div className="stat-badge-label">Available</div>
+            </div>
+            <div className="stat-badge">
+              <div className="stat-badge-value">{providerRentals.length}</div>
+              <div className="stat-badge-label">Total Rentals</div>
+            </div>
+            <div className="stat-badge">
+              <div className="stat-badge-value">${providerRentals.reduce((s, r) => s + (r.cost || 0), 0).toFixed(2)}</div>
+              <div className="stat-badge-label">Revenue</div>
+            </div>
+          </div>
         </Section>
       )}
 
@@ -852,8 +1532,18 @@ function AdminViews({ tab }) {
   return (
     <>
       {tab === 'home' && (
-        <Section title="Admin dashboard" subtitle="System monitoring">
-          <Card title="SUMMS Management" text="View rental and gateway analytics." />
+        <Section title="Operations Center" subtitle="System monitoring and analytics">
+          <div className="grid-2 fade-up">
+            <div className="quick-action" onClick={() => {}}>
+              <h3>Rental Analytics</h3>
+              <p>Usage trends, fleet demand, and active rental tracking</p>
+            </div>
+            <div className="quick-action" onClick={() => {}}>
+              <h3>Gateway Monitor</h3>
+              <p>API health, request logs, and service status</p>
+            </div>
+          </div>
+          <AdminDashboard mode="overview" />
         </Section>
       )}
 
@@ -882,6 +1572,26 @@ function Card({ title, text, action }) {
       <h3>{title}</h3>
       <p>{text}</p>
       {action}
+    </div>
+  );
+}
+
+function RentalStepIndicator({ reservation, activeRental, paymentDone }) {
+  const step = paymentDone ? 4 : activeRental ? 3 : reservation ? 2 : 1;
+  const steps = [
+    { num: 1, label: 'Search' },
+    { num: 2, label: 'Reserve' },
+    { num: 3, label: 'Ride' },
+    { num: 4, label: 'Done' },
+  ];
+  return (
+    <div className="rental-steps">
+      {steps.map((s) => (
+        <div key={s.num} className={`rental-step ${step === s.num ? 'is-active' : ''} ${step > s.num ? 'is-done' : ''}`}>
+          <div className="rental-step-dot">{step > s.num ? '\u2713' : s.num}</div>
+          <div className="rental-step-label">{s.label}</div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1139,10 +1849,10 @@ function RecommendationBanner({ user, onSelectTab }) {
   if (!summary) return null;
 
   return (
-    <div className="panel" style={{ borderColor: 'var(--primary)', background: 'rgba(56,189,248,0.08)' }}>
-      <p style={{ color: 'var(--primary)', fontWeight: 600, margin: 0 }}>{summary}</p>
-      <button className="btn btn-primary" style={{ marginTop: 8, width: 'fit-content' }} onClick={() => onSelectTab('recommendations')}>
-        View all recommendations
+    <div className="reco-banner fade-up">
+      <p>{summary}</p>
+      <button className="btn btn-primary" style={{ flexShrink: 0 }} onClick={() => onSelectTab('recommendations')}>
+        View all
       </button>
     </div>
   );
@@ -1184,15 +1894,16 @@ function RecommendationsView({ user, onSelectTab }) {
           {data.recommendations.map((rec, i) => (
             <div
               key={i}
-              className="panel"
+              className="panel fade-up"
               style={{
-                borderColor: rec.type === 'success' ? 'var(--success)' : rec.type === 'warning' ? 'var(--warning)' : 'var(--primary)',
-                background: rec.type === 'success' ? 'rgba(52,211,153,0.08)' : rec.type === 'warning' ? 'rgba(251,191,36,0.08)' : 'rgba(56,189,248,0.06)',
+                borderColor: rec.type === 'success' ? 'rgba(90,228,167,0.3)' : rec.type === 'warning' ? 'rgba(240,194,74,0.3)' : 'rgba(228,169,77,0.3)',
+                background: rec.type === 'success' ? 'var(--success-dim)' : rec.type === 'warning' ? 'var(--warning-dim)' : 'var(--accent-dim)',
+                animationDelay: `${i * 0.06}s`,
               }}
             >
               <p style={{
-                color: rec.type === 'success' ? 'var(--success)' : rec.type === 'warning' ? 'var(--warning)' : 'var(--primary)',
-                fontWeight: 600,
+                color: rec.type === 'success' ? 'var(--success)' : rec.type === 'warning' ? 'var(--warning)' : 'var(--accent-text)',
+                fontWeight: 500,
                 margin: 0,
               }}>
                 {rec.message}
@@ -1263,17 +1974,22 @@ function Profile({ user, role, onUpdatePreferences }) {
     }
   };
 
+  const roleLabel = role === 'provider' ? 'Mobility Provider' : role === 'admin' ? 'Administrator' : 'Citizen';
+
   return (
-    <Section title="Profile" subtitle="Account details and preferences">
-      <div className="card stack-8">
-        <p>Name: {user?.name || '-'}</p>
-        <p>Email: {user?.email || '-'}</p>
-        <p>Role: {role || '-'}</p>
+    <Section title="Profile" subtitle="Your account and preferences">
+      <div className="card stack-8 fade-up">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3>{user?.name || user?.email}</h3>
+          <span className="status-pill" style={{ background: 'var(--accent-dim)', color: 'var(--accent-text)' }}>{roleLabel}</span>
+        </div>
+        <p style={{ color: 'var(--text-2)' }}>{user?.email}</p>
       </div>
 
       {user?.role === 'user' && (
-        <div className="card stack-12">
-          <h3>Travel preferences</h3>
+        <div className="card stack-12 fade-up fade-up-1">
+          <h3>Travel Preferences</h3>
+          <p style={{ color: 'var(--text-3)', fontSize: '0.85rem' }}>Set your preferences to get personalized vehicle and parking recommendations.</p>
           <label>
             Preferred city
             <input
@@ -1284,7 +2000,7 @@ function Profile({ user, role, onUpdatePreferences }) {
           </label>
           <label>
             Preferred mobility type
-            <div className="row gap-8" style={{ marginTop: 6 }}>
+            <div className="row gap-8" style={{ marginTop: 8 }}>
               {['bike', 'scooter'].map((type) => (
                 <button
                   key={type}
@@ -1303,9 +2019,9 @@ function Profile({ user, role, onUpdatePreferences }) {
             </div>
           </label>
           <button className="btn btn-primary" style={{ width: 'fit-content' }} onClick={savePreferences}>
-            Save preferences
+            Save Preferences
           </button>
-          {saved && <p style={{ color: 'var(--success)', margin: 0 }}>Preferences saved!</p>}
+          {saved && <p style={{ color: 'var(--success)', margin: 0, fontSize: '0.88rem' }}>Preferences saved!</p>}
         </div>
       )}
     </Section>

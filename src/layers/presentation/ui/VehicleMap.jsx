@@ -34,9 +34,10 @@ async function geocodeAddress(address) {
   return null;
 }
 
-export default function VehicleMap({ vehicles = [], onReserve, reservation, activeRental }) {
+export default function VehicleMap({ vehicles = [], bixiStations = [], onReserve, reservation, activeRental }) {
   const [vehiclesWithCoords, setVehiclesWithCoords] = useState([]);
   const [selectedVehicle, setSelectedVehicle] = useState(null);
+  const [selectedBixi, setSelectedBixi] = useState(null);
   const [returnPoint, setReturnPoint] = useState(null);
   const [pickingReturn, setPickingReturn] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -132,6 +133,31 @@ export default function VehicleMap({ vehicles = [], onReserve, reservation, acti
               >
                 Set return point
               </button>
+            </div>
+          </InfoWindowF>
+        )}
+
+        {/* BIXI Station Markers */}
+        {bixiStations.map((station) => (
+          <MarkerF
+            key={`bixi-${station.id}`}
+            position={{ lat: station.lat, lng: station.lon }}
+            onClick={() => setSelectedBixi(station)}
+            title={station.name}
+            icon={{
+              url: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="%23FF6B6B" stroke="white" stroke-width="2"/><text x="12" y="16" text-anchor="middle" fill="white" font-size="12" font-weight="bold">B</text></svg>'),
+              scaledSize: { width: 28, height: 28, equals: () => false },
+            }}
+          />
+        ))}
+
+        {selectedBixi && (
+          <InfoWindowF position={{ lat: selectedBixi.lat, lng: selectedBixi.lon }} onCloseClick={() => setSelectedBixi(null)}>
+            <div style={{ padding: '0.5rem', minWidth: '180px', color: '#111' }}>
+              <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>🚲 {selectedBixi.name}</h3>
+              <p style={{ margin: '0 0 0.25rem', fontSize: '0.875rem' }}>Bikes: {selectedBixi.bikesAvailable} | E-bikes: {selectedBixi.ebikesAvailable}</p>
+              <p style={{ margin: '0 0 0.25rem', fontSize: '0.875rem' }}>Docks free: {selectedBixi.docksAvailable} / {selectedBixi.capacity}</p>
+              <p style={{ margin: 0, fontSize: '0.8rem', color: '#666' }}>BIXI Station</p>
             </div>
           </InfoWindowF>
         )}

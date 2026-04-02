@@ -1,5 +1,5 @@
 const ROLE_TABS = {
-  citizen: ['home', 'recommendations', 'search', 'transit', 'parking', 'activeRental', 'profile'],
+  citizen: ['dashboard', 'mobility', 'parking', 'transit', 'analytics', 'activeRental', 'profile'],
   provider: ['home', 'vehicles', 'rentalData', 'profile'],
   admin: ['home', 'rentalAnalytics', 'gatewayAnalytics', 'adminDashboard', 'profile'],
 };
@@ -49,4 +49,3 @@ export function createRoleDashboardCreator(role) {
   if (role === 'provider') return new ProviderDashboardCreator();
   return new CitizenDashboardCreator();
 }
-
