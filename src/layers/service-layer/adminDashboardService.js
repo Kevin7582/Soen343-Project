@@ -2,6 +2,21 @@
 // Facade Pattern: Aggregates analytics and monitoring data for admin views.
 
 import { supabase } from "../data-layer/supabaseClient";
+import SupabaseRealtimeSubject from "./realtime/SupabaseRealtimeSubject";
+
+const MONITORING_TABLES = [
+  "rentals",
+  "vehicles",
+  "parking_spots",
+  "parking_reservations",
+  "users",
+];
+
+const monitoringSubject = new SupabaseRealtimeSubject({
+  supabaseClient: supabase,
+  channelName: "admin-monitoring-channel",
+  tables: MONITORING_TABLES,
+});
 
 function createHourlyBuckets() {
   return Array.from({ length: 24 }, (_, hour) => ({
@@ -281,32 +296,19 @@ const AdminDashboardService = {
     };
   },
 
-  subscribeToMonitoringChanges(callback, onStatusChange) {
-    const channel = supabase.channel("admin-monitoring-channel");
-    const tables = [
-      "rentals",
-      "vehicles",
-      "parking_spots",
-      "parking_reservations",
-      "users",
-    ];
-
-    tables.forEach((table) => {
-      channel.on(
-        "postgres_changes",
-        { event: "*", schema: "public", table },
-        (payload) => callback?.({ ...payload, table })
-      );
-    });
-
-    return channel.subscribe((status) => {
-      onStatusChange?.(status);
-    });
+  subscribeToMonitoringChanges(observer) {
+    monitoringSubject.subscribe(observer);
+    monitoringSubject.connect();
+    return observer;
   },
 
-  unsubscribe(channel) {
-    if (channel) {
-      supabase.removeChannel(channel);
+  unsubscribe(observer) {
+    if (!observer) return;
+
+    monitoringSubject.unsubscribe(observer);
+
+    if (monitoringSubject.observerCount === 0) {
+      monitoringSubject.disconnect();
     }
   },
 };
