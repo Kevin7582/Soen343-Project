@@ -302,6 +302,10 @@ const AdminDashboardService = {
     return observer;
   },
 
+  getMonitoringTables() {
+    return [...MONITORING_TABLES];
+  },
+
   unsubscribe(observer) {
     if (!observer) return;
 

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import AdminDashboardService from "../../service-layer/adminDashboardService";
+import RealtimeObserverPanel from "./RealtimeObserverPanel";
 
 const MAX_EVENTS = 10;
 
@@ -516,6 +517,8 @@ export default function AdminDashboard({ mode = "overview" }) {
           {error}
         </div>
       ) : null}
+
+      <RealtimeObserverPanel />
 
       <div style={styles.statGrid}>
         {statCards.map((card) => (
