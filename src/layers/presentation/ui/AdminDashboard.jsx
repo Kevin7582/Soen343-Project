@@ -20,9 +20,8 @@ function formatRelative(value) {
 function formatEvent(payload) {
   const eventType = payload?.eventType || "UPDATE";
   const table = payload?.table || "unknown";
-  const record = payload?.new && Object.keys(payload.new).length > 0 ? payload.new : payload?.old || {};
-  const recordId = record.id ? `#${record.id}` : "record";
-  const changedAt = new Date();
+  const recordId = payload?.recordId ? `#${payload.recordId}` : "record";
+  const changedAt = payload?.timestamp ? new Date(payload.timestamp) : new Date();
 
   return {
     id: `${table}-${eventType}-${recordId}-${changedAt.getTime()}`,
@@ -448,24 +447,26 @@ export default function AdminDashboard({ mode = "overview" }) {
   useEffect(() => {
     loadData();
 
-    const channel = AdminDashboardService.subscribeToMonitoringChanges(
-      (payload) => {
+    const observer = {
+      update(payload) {
         setConnectionStatus("live");
         setEvents((previous) => [formatEvent(payload), ...previous].slice(0, MAX_EVENTS));
         loadData({ silent: true });
       },
-      (status) => {
+      onSubjectStatusChange(status) {
         if (status === "SUBSCRIBED") setConnectionStatus("live");
         else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
           setConnectionStatus("disconnected");
         } else {
           setConnectionStatus("syncing");
         }
-      }
-    );
+      },
+    };
+
+    AdminDashboardService.subscribeToMonitoringChanges(observer);
 
     return () => {
-      AdminDashboardService.unsubscribe(channel);
+      AdminDashboardService.unsubscribe(observer);
     };
   }, []);
 
