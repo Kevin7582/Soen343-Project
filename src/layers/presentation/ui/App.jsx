@@ -25,6 +25,7 @@ import ParkingMap from './ParkingMap';
 
 const TAB_LABELS = {
   dashboard: 'Dashboard',
+  recommendations: 'For You',
   mobility: 'Mobility',
   parking: 'Parking',
   transit: 'Transit',
@@ -787,6 +788,10 @@ function CitizenViews({
     <>
       {tab === 'dashboard' && (
         <DashboardPage user={user} onSelectTab={onSelectTab} reservation={reservation} activeRental={activeRental} vehiclesData={vehiclesData} parkingSpots={parkingSpots} />
+      )}
+
+      {tab === 'recommendations' && (
+        <RecommendationsView user={user} onSelectTab={onSelectTab} />
       )}
 
       {tab === 'mobility' && (
@@ -1928,7 +1933,7 @@ function RecommendationsView({ user, onSelectTab }) {
                     title={v.name || `${v.type} #${v.id}`}
                     text={`${v.type} | ${v.location || 'Nearby'} | $${v.rate_per_min ?? 0.25}/min`}
                     action={
-                      <button className="btn btn-primary" onClick={() => onSelectTab('search')}>
+                      <button className="btn btn-primary" onClick={() => onSelectTab('mobility')}>
                         Find & reserve
                       </button>
                     }

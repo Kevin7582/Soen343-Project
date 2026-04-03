@@ -1,5 +1,5 @@
 const ROLE_TABS = {
-  citizen: ['dashboard', 'mobility', 'parking', 'transit', 'analytics', 'activeRental', 'profile'],
+  citizen: ['dashboard', 'recommendations', 'mobility', 'parking', 'transit', 'analytics', 'activeRental', 'profile'],
   provider: ['home', 'vehicles', 'rentalData', 'profile'],
   admin: ['home', 'rentalAnalytics', 'gatewayAnalytics', 'adminDashboard', 'profile'],
 };
