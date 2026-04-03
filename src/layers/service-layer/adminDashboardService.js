@@ -394,6 +394,13 @@ const AdminDashboardService = {
     return [...MONITORING_TABLES];
   },
 
+  getGatewayMonitoringSnapshot(limit = 20) {
+    return {
+      stats: gateway.getStats(),
+      log: gateway.getRequestLog().slice(0, limit),
+    };
+  },
+
   unsubscribe(observer) {
     if (!observer) return;
 

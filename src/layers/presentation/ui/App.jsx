@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AuthProvider, ROLES, useAuth } from '../context/AuthContext';
 import { RentalProvider, useRental } from '../context/RentalContext';
 import AdminDashboard from "./AdminDashboard";
+import AdminDashboardService from '../../service-layer/adminDashboardService';
 import TransitMap from './TransitMap';
 import RecommendationService from '../../service-layer/recommendationService';
 import { createRoleDashboardCreator } from './roleDashboardFactory';
@@ -1789,10 +1790,10 @@ function GatewayAnalytics() {
   const [log, setLog] = useState([]);
 
   useEffect(() => {
-    const load = async () => {
-      const { gateway } = await import('../../api-gateway/apiClient');
-      setStats(gateway.getStats());
-      setLog(gateway.getRequestLog().slice(0, 20));
+    const load = () => {
+      const snapshot = AdminDashboardService.getGatewayMonitoringSnapshot(20);
+      setStats(snapshot.stats);
+      setLog(snapshot.log);
     };
     load();
     const interval = setInterval(load, 5000);
