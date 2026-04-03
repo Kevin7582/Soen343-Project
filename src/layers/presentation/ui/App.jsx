@@ -13,6 +13,7 @@ import {
   completeParkingReservation,
   cancelParkingReservation,
   fetchParkingSpots,
+  fetchProviderVehicles,
   fetchProviderRentals,
   fetchTransitRoutes,
   fetchUserParkingReservation,
@@ -23,12 +24,6 @@ import {
 } from '../../service-layer/mobilityService';
 import VehicleMap from './VehicleMap';
 import ParkingMap from './ParkingMap';
-
-const FALLBACK_PROVIDER_VEHICLES = [
-  { id: 'v1', type: 'scooter', name: 'Scooter #101', status: 'available', maintenance: 'ok' },
-  { id: 'v2', type: 'scooter', name: 'Scooter #102', status: 'available', maintenance: 'ok' },
-  { id: 'v3', type: 'bike', name: 'Bike #201', status: 'maintenance', maintenance: 'pending' },
-];
 
 export default function App() {
   return (
@@ -190,7 +185,7 @@ function Dashboard() {
   const [parkingDuration, setParkingDuration] = useState('1');
   const [mobilityError, setMobilityError] = useState('');
 
-  const { loadingData, vehiclesData, transitRoutes, parkingSpots, providerRentals, refreshDashboardData } = useDashboardData();
+  const { loadingData, vehiclesData, transitRoutes, parkingSpots, providerRentals, refreshDashboardData } = useDashboardData(user);
 
   const roleDashboardCreator = useMemo(
     () => createRoleDashboardCreator(user?.role),
@@ -404,8 +399,11 @@ function Dashboard() {
     renderProvider: () => (
       <ProviderViews
         tab={tab}
+        user={user}
+        loadingData={loadingData}
         vehiclesData={vehiclesData}
         providerRentals={providerRentals}
+        onFleetUpdated={refreshDashboardData}
       />
     ),
     renderAdmin: () => <AdminViews tab={tab} />,
@@ -1494,7 +1492,7 @@ function ChartBar({ label, value, max, color, suffix = '' }) {
   );
 }
 
-function ProviderViews({ tab, vehiclesData, providerRentals }) {
+function ProviderViews({ tab, user, loadingData, vehiclesData, providerRentals, onFleetUpdated }) {
   return (
     <>
       {tab === 'home' && (
@@ -1520,7 +1518,14 @@ function ProviderViews({ tab, vehiclesData, providerRentals }) {
         </Section>
       )}
 
-      {tab === 'vehicles' && <ProviderVehicles initialVehicles={vehiclesData} />}
+      {tab === 'vehicles' && (
+        <ProviderVehicles
+          providerId={user?.id}
+          loadingData={loadingData}
+          initialVehicles={vehiclesData}
+          onFleetUpdated={onFleetUpdated}
+        />
+      )}
       {tab === 'rentalData' && <ProviderRentalData rentals={providerRentals} />}
     </>
   );
@@ -1594,85 +1599,104 @@ function RentalStepIndicator({ reservation, activeRental, paymentDone }) {
   );
 }
 
-function ProviderVehicles({ initialVehicles = [] }) {
+function ProviderVehicles({ providerId, initialVehicles = [], loadingData = false, onFleetUpdated }) {
   const [vehicles, setVehicles] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({ type: '', location: '', rate_per_min: '' });
   const [showAddForm, setShowAddForm] = useState(false);
   const [addForm, setAddForm] = useState({ type: 'scooter', location: '', rate_per_min: '0.25' });
 
   useEffect(() => {
-    async function load() {
-      const { data, error } = await supabase.from('vehicles').select('*');
-      if (!error && data) {
-        setVehicles(data);
-      } else {
-        setVehicles(FALLBACK_PROVIDER_VEHICLES);
-      }
-      setLoading(false);
-    }
-    load();
-  }, []);
+    setVehicles(initialVehicles);
+  }, [initialVehicles]);
+
+  const resolvedProviderId = Number(providerId);
 
   const addVehicle = async () => {
-    if (!addForm.location.trim()) return;
+    if (!addForm.location.trim() || !Number.isFinite(resolvedProviderId)) return;
     const newVehicle = {
       type: addForm.type.toLowerCase(),
       location: addForm.location.trim(),
       available: true,
       rate_per_min: parseFloat(addForm.rate_per_min) || 0.25,
-      provider_id: 1,
+      provider_id: resolvedProviderId,
     };
     const { data, error } = await supabase.from('vehicles').insert(newVehicle).select().single();
     if (!error && data) {
       setVehicles((prev) => [...prev, data]);
       setShowAddForm(false);
       setAddForm({ type: 'scooter', location: '', rate_per_min: '0.25' });
+      await onFleetUpdated?.();
     }
   };
 
   const startEdit = (vehicle) => {
+    const currentRate = vehicle.rate_per_min ?? vehicle.ratePerMin ?? 0.25;
     setEditingId(vehicle.id);
     setEditForm({
       type: vehicle.type || 'scooter',
       location: vehicle.location || '',
-      rate_per_min: String(vehicle.rate_per_min ?? 0.25),
+      rate_per_min: String(currentRate),
     });
   };
 
   const saveEdit = async (vehicleId) => {
+    if (!Number.isFinite(resolvedProviderId)) return;
     const updates = {
       type: editForm.type.toLowerCase(),
       location: editForm.location.trim(),
       rate_per_min: parseFloat(editForm.rate_per_min) || 0.25,
     };
-    const { error } = await supabase.from('vehicles').update(updates).eq('id', vehicleId);
+    const { error } = await supabase
+      .from('vehicles')
+      .update(updates)
+      .eq('id', vehicleId)
+      .eq('provider_id', resolvedProviderId);
     if (!error) {
       setVehicles((prev) => prev.map((v) => (v.id === vehicleId ? { ...v, ...updates } : v)));
       setEditingId(null);
+      await onFleetUpdated?.();
     }
   };
 
   const toggleVehicleStatus = async (vehicleId) => {
+    if (!Number.isFinite(resolvedProviderId)) return;
     const vehicle = vehicles.find((v) => v.id === vehicleId);
     if (!vehicle) return;
-    const newAvailable = !vehicle.available;
-    const { error } = await supabase.from('vehicles').update({ available: newAvailable }).eq('id', vehicleId);
+    const isAvailable = typeof vehicle.available === 'boolean' ? vehicle.available : vehicle.status === 'available';
+    const newAvailable = !isAvailable;
+    const { error } = await supabase
+      .from('vehicles')
+      .update({ available: newAvailable })
+      .eq('id', vehicleId)
+      .eq('provider_id', resolvedProviderId);
     if (!error) {
-      setVehicles((prev) => prev.map((v) => (v.id === vehicleId ? { ...v, available: newAvailable } : v)));
+      setVehicles((prev) =>
+        prev.map((v) =>
+          v.id === vehicleId
+            ? { ...v, available: newAvailable, status: newAvailable ? 'available' : 'unavailable' }
+            : v
+        )
+      );
+      await onFleetUpdated?.();
     }
   };
 
   const removeVehicle = async (vehicleId) => {
+    if (!Number.isFinite(resolvedProviderId)) return;
     if (!window.confirm('Remove this vehicle?')) return;
-    const { error } = await supabase.from('vehicles').delete().eq('id', vehicleId);
+    const { error } = await supabase
+      .from('vehicles')
+      .delete()
+      .eq('id', vehicleId)
+      .eq('provider_id', resolvedProviderId);
     if (!error) {
       setVehicles((prev) => prev.filter((v) => v.id !== vehicleId));
+      await onFleetUpdated?.();
     }
   };
 
-  if (loading) return (
+  if (loadingData) return (
     <Section title="Vehicles" subtitle="Fleet management">
       <div className="panel">Loading...</div>
     </Section>
@@ -1707,6 +1731,10 @@ function ProviderVehicles({ initialVehicles = [] }) {
         </div>
       )}
 
+      {!loadingData && vehicles.length === 0 && (
+        <div className="panel">No vehicles found for your provider account yet.</div>
+      )}
+
       <div className="grid-2">
         {vehicles.map((vehicle) => (
           <div className="card stack-8" key={vehicle.id}>
@@ -1737,8 +1765,8 @@ function ProviderVehicles({ initialVehicles = [] }) {
               <>
                 <h3>{vehicle.type} #{vehicle.id}</h3>
                 <p>Location: {vehicle.location || 'N/A'}</p>
-                <p>Rate: ${vehicle.rate_per_min ?? 0.25}/min</p>
-                <p>Status: {vehicle.available ? 'available' : 'unavailable'}</p>
+                <p>Rate: ${vehicle.rate_per_min ?? vehicle.ratePerMin ?? 0.25}/min</p>
+                <p>Status: {(typeof vehicle.available === 'boolean' ? vehicle.available : vehicle.status === 'available') ? 'available' : 'unavailable'}</p>
                 <div className="row gap-8 wrap">
                   <button className="btn btn-soft" onClick={() => startEdit(vehicle)}>Edit</button>
                   <button className="btn btn-soft" onClick={() => toggleVehicleStatus(vehicle.id)}>Toggle status</button>
@@ -2037,7 +2065,7 @@ function Profile({ user, role, onUpdatePreferences }) {
   );
 }
 
-function useDashboardData() {
+function useDashboardData(user) {
   const [vehiclesData, setVehiclesData] = useState([]);
   const [transitRoutes, setTransitRoutes] = useState([]);
   const [parkingSpots, setParkingSpots] = useState([]);
@@ -2047,11 +2075,13 @@ function useDashboardData() {
   const refreshDashboardData = useCallback(async () => {
     try {
       setLoadingData(true);
+      const isProvider = user?.role === ROLES.MOBILITY_PROVIDER;
+      const providerId = user?.id;
       const [vehicles, routes, spots, rentals] = await Promise.all([
-        fetchVehicles(),
+        isProvider ? fetchProviderVehicles(providerId) : fetchVehicles(),
         fetchTransitRoutes(),
         fetchParkingSpots(),
-        fetchProviderRentals(),
+        isProvider ? fetchProviderRentals(providerId) : Promise.resolve([]),
       ]);
       setVehiclesData(vehicles);
       setTransitRoutes(routes);
@@ -2060,7 +2090,7 @@ function useDashboardData() {
     } finally {
       setLoadingData(false);
     }
-  }, []);
+  }, [user?.id, user?.role]);
 
   useEffect(() => {
     refreshDashboardData();

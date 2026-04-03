@@ -1,6 +1,5 @@
 import {
   mockParkingSpots,
-  mockProviderRentals,
   mockTransitRoutes,
   mockVehicles,
 } from '../data-layer/mockData';
@@ -106,6 +105,25 @@ export async function fetchVehicles() {
   return data.map(mapVehicle);
 }
 
+export async function fetchProviderVehicles(providerId) {
+  const resolvedProviderId = Number(providerId);
+  if (!Number.isFinite(resolvedProviderId)) return [];
+
+  const { data, error } = await supabase
+    .from('vehicles')
+    .select('*')
+    .eq('provider_id', resolvedProviderId)
+    .limit(100);
+
+  if (error) {
+    fallbackWarn('provider vehicles read', error);
+    return [];
+  }
+
+  if (!data?.length) return [];
+  return data.map(mapVehicle);
+}
+
 export async function fetchTransitRoutes() {
   const { data, error } = await supabase.from('transit_routes').select('*').limit(100);
   if (error) {
@@ -135,14 +153,38 @@ export async function fetchParkingSpots() {
   return data.map(mapParkingSpot);
 }
 
-export async function fetchProviderRentals() {
-  const { data, error } = await supabase.from('rentals').select('*').limit(100);
-  if (error) {
-    fallbackWarn('rentals read', error);
-    return mockProviderRentals;
+export async function fetchProviderRentals(providerId) {
+  const resolvedProviderId = Number(providerId);
+  if (!Number.isFinite(resolvedProviderId)) return [];
+
+  const { data: providerVehicles, error: providerVehiclesError } = await supabase
+    .from('vehicles')
+    .select('id')
+    .eq('provider_id', resolvedProviderId)
+    .limit(200);
+
+  if (providerVehiclesError) {
+    fallbackWarn('provider vehicles for rentals read', providerVehiclesError);
+    return [];
   }
 
-  if (!data?.length) return mockProviderRentals;
+  const vehicleIds = (providerVehicles ?? [])
+    .map((vehicle) => vehicle.id)
+    .filter((id) => id != null);
+
+  if (vehicleIds.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from('rentals')
+    .select('*')
+    .in('vehicle_id', vehicleIds)
+    .limit(100);
+  if (error) {
+    fallbackWarn('provider rentals read', error);
+    return [];
+  }
+
+  if (!data?.length) return [];
   return data.map((item) => ({
     id: String(item.id ?? crypto.randomUUID()),
     vehicle: `Vehicle #${item.vehicle_id}`,
