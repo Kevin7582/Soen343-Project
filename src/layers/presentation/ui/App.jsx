@@ -24,23 +24,6 @@ import {
 import VehicleMap from './VehicleMap';
 import ParkingMap from './ParkingMap';
 
-const TAB_LABELS = {
-  dashboard: 'Dashboard',
-  recommendations: 'For You',
-  mobility: 'Mobility',
-  parking: 'Parking',
-  transit: 'Transit',
-  analytics: 'Analytics',
-  activeRental: 'Active Rental',
-  home: 'Home',
-  vehicles: 'Vehicles',
-  rentalData: 'Rentals',
-  rentalAnalytics: 'Rental Analytics',
-  gatewayAnalytics: 'Gateway Analytics',
-  profile: 'Profile',
-  adminDashboard: 'Admin Dashboard',
-};
-
 const FALLBACK_PROVIDER_VEHICLES = [
   { id: 'v1', type: 'scooter', name: 'Scooter #101', status: 'available', maintenance: 'ok' },
   { id: 'v2', type: 'scooter', name: 'Scooter #102', status: 'available', maintenance: 'ok' },
@@ -198,7 +181,7 @@ function Dashboard() {
     rentalError,
     clearError,
   } = useRental();
-  const [tab, setTab] = useState(user?.role === 'user' ? 'dashboard' : 'home');
+  const [tab, setTab] = useState(() => createRoleDashboardCreator(user?.role).createDefaultTab());
   const [vehicleType, setVehicleType] = useState('all');
   const [radius, setRadius] = useState('2');
   const [paymentDone, setPaymentDone] = useState(false);
@@ -213,13 +196,19 @@ function Dashboard() {
     () => createRoleDashboardCreator(user?.role),
     [user?.role]
   );
-  const tabs = useMemo(() => roleDashboardCreator.createTabs(), [roleDashboardCreator]);
+  const navigationConfig = useMemo(
+    () => roleDashboardCreator.createNavigationConfig(),
+    [roleDashboardCreator]
+  );
+  const tabs = navigationConfig.tabs;
+  const tabLabels = navigationConfig.tabLabels;
+  const defaultTab = navigationConfig.defaultTab;
 
   useEffect(() => {
     if (!tabs.includes(tab)) {
-      setTab(tabs[0] || 'dashboard');
+      setTab(defaultTab);
     }
-  }, [tab, tabs]);
+  }, [defaultTab, tab, tabs]);
 
   useEffect(() => {
     let mounted = true;
@@ -424,7 +413,14 @@ function Dashboard() {
 
   return (
     <div className="dashboard">
-      <Sidebar user={user} tabs={tabs} activeTab={tab} onSelectTab={setTab} onLogout={logout} />
+      <Sidebar
+        user={user}
+        tabs={tabs}
+        tabLabels={tabLabels}
+        activeTab={tab}
+        onSelectTab={setTab}
+        onLogout={logout}
+      />
 
       <main className="content">
         {loadingData && <div className="panel">Loading data from Supabase...</div>}
@@ -730,7 +726,7 @@ const paymentStyles = {
   },
 };
 
-function Sidebar({ user, tabs, activeTab, onSelectTab, onLogout }) {
+function Sidebar({ user, tabs, tabLabels, activeTab, onSelectTab, onLogout }) {
   const roleLabel = user?.role === 'provider' ? 'Provider' : user?.role === 'admin' ? 'Admin' : 'Citizen';
   return (
     <aside className="sidebar">
@@ -747,7 +743,7 @@ function Sidebar({ user, tabs, activeTab, onSelectTab, onLogout }) {
             className={`btn nav-btn ${activeTab === tabName ? 'nav-btn-active' : ''}`}
             onClick={() => onSelectTab(tabName)}
           >
-            {TAB_LABELS[tabName] || tabName}
+            {tabLabels[tabName] || tabName}
           </button>
         ))}
       </div>

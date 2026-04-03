@@ -17,27 +17,33 @@ class Dashboard {
 
 class RoleDashboardCreator {
   <<abstract>>
-  +createTabs(): string[]
+  +createNavigationConfig(): NavigationConfig
   +createMainContent(renderers): JSX
 }
 
 class CitizenDashboardCreator {
-  +createTabs(): string[]
+  +createNavigationConfig(): NavigationConfig
   +createMainContent(renderers): JSX
 }
 
 class ProviderDashboardCreator {
-  +createTabs(): string[]
+  +createNavigationConfig(): NavigationConfig
   +createMainContent(renderers): JSX
 }
 
 class AdminDashboardCreator {
-  +createTabs(): string[]
+  +createNavigationConfig(): NavigationConfig
   +createMainContent(renderers): JSX
 }
 
 class RoleDashboardFactory {
   +createRoleDashboardCreator(role): RoleDashboardCreator
+}
+
+class NavigationConfig {
+  +defaultTab: string
+  +tabs: string[]
+  +tabLabels: object
 }
 
 class AuthContext {
@@ -128,6 +134,7 @@ RoleDashboardFactory --> RoleDashboardCreator
 RoleDashboardCreator <|-- CitizenDashboardCreator
 RoleDashboardCreator <|-- ProviderDashboardCreator
 RoleDashboardCreator <|-- AdminDashboardCreator
+RoleDashboardCreator --> NavigationConfig
 
 Dashboard --> AuthContext
 Dashboard --> RentalContext
