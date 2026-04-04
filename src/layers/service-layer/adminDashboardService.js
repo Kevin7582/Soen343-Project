@@ -3,6 +3,21 @@
 
 import { supabase } from "../data-layer/supabaseClient";
 import { gateway } from "../api-gateway/apiClient";
+import SupabaseRealtimeSubject from "./realtime/SupabaseRealtimeSubject";
+
+const MONITORING_TABLES = [
+  "rentals",
+  "vehicles",
+  "parking_spots",
+  "parking_reservations",
+  "users",
+];
+
+const monitoringSubject = new SupabaseRealtimeSubject({
+  supabaseClient: supabase,
+  channelName: "admin-monitoring-channel",
+  tables: MONITORING_TABLES,
+});
 
 function extractCity(locationOrAddress) {
   if (!locationOrAddress) return "Unknown";
@@ -369,32 +384,30 @@ const AdminDashboardService = {
     };
   },
 
-  subscribeToMonitoringChanges(callback, onStatusChange) {
-    const channel = supabase.channel("admin-monitoring-channel");
-    const tables = [
-      "rentals",
-      "vehicles",
-      "parking_spots",
-      "parking_reservations",
-      "users",
-    ];
-
-    tables.forEach((table) => {
-      channel.on(
-        "postgres_changes",
-        { event: "*", schema: "public", table },
-        (payload) => callback?.({ ...payload, table })
-      );
-    });
-
-    return channel.subscribe((status) => {
-      onStatusChange?.(status);
-    });
+  subscribeToMonitoringChanges(observer) {
+    monitoringSubject.subscribe(observer);
+    monitoringSubject.connect();
+    return observer;
   },
 
-  unsubscribe(channel) {
-    if (channel) {
-      supabase.removeChannel(channel);
+  getMonitoringTables() {
+    return [...MONITORING_TABLES];
+  },
+
+  getGatewayMonitoringSnapshot(limit = 20) {
+    return {
+      stats: gateway.getStats(),
+      log: gateway.getRequestLog().slice(0, limit),
+    };
+  },
+
+  unsubscribe(observer) {
+    if (!observer) return;
+
+    monitoringSubject.unsubscribe(observer);
+
+    if (monitoringSubject.observerCount === 0) {
+      monitoringSubject.disconnect();
     }
   },
 };

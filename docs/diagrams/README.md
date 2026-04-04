@@ -512,22 +512,22 @@ class SupabaseRealtimeSubject {
 
 class RoleDashboardCreator {
   <<abstract>>
-  +createTabs(): string[]
+  +createNavigationConfig(): NavigationConfig
   +createMainContent(renderers): JSX
 }
 
 class CitizenDashboardCreator {
-  +createTabs(): string[]
+  +createNavigationConfig(): NavigationConfig
   +createMainContent(renderers): JSX
 }
 
 class ProviderDashboardCreator {
-  +createTabs(): string[]
+  +createNavigationConfig(): NavigationConfig
   +createMainContent(renderers): JSX
 }
 
 class AdminDashboardCreator {
-  +createTabs(): string[]
+  +createNavigationConfig(): NavigationConfig
   +createMainContent(renderers): JSX
 }
 
@@ -535,6 +535,12 @@ class RoleDashboardFactory {
   +createRoleDashboardCreator(role): RoleDashboardCreator
 }
 note for RoleDashboardFactory "Factory Method"
+
+class NavigationConfig {
+  +defaultTab: string
+  +tabs: string[]
+  +tabLabels: object
+}
 
 class Vehicle {
   +id: string
@@ -594,6 +600,7 @@ RoleDashboardFactory --> RoleDashboardCreator
 RoleDashboardCreator <|-- CitizenDashboardCreator
 RoleDashboardCreator <|-- ProviderDashboardCreator
 RoleDashboardCreator <|-- AdminDashboardCreator
+RoleDashboardCreator --> NavigationConfig
 
 AdminDashboard --> DashboardFacade
 DashboardFacade <|.. AdminDashboardService
@@ -677,26 +684,32 @@ Source: [Design patterns diagram/Factory pattern.mmd](./Design%20patterns%20diag
 classDiagram
     class RoleDashboardCreator {
       <<abstract>>
-      +createTabs() string[]
+      +createNavigationConfig() NavigationConfig
       +createMainContent(renderers) JSXElement
     }
 
     class CitizenDashboardCreator {
-      +createTabs() string[]
+      +createNavigationConfig() NavigationConfig
       +createMainContent(renderers) JSXElement
     }
 
     class ProviderDashboardCreator {
-      +createTabs() string[]
+      +createNavigationConfig() NavigationConfig
       +createMainContent(renderers) JSXElement
     }
 
     class AdminDashboardCreator {
-      +createTabs() string[]
+      +createNavigationConfig() NavigationConfig
       +createMainContent(renderers) JSXElement
     }
 
-    class DashboardFactory {
+    class NavigationConfig {
+      +defaultTab: string
+      +tabs: string[]
+      +tabLabels: object
+    }
+
+    class RoleDashboardFactory {
       +createRoleDashboardCreator(role) RoleDashboardCreator
     }
 
@@ -707,7 +720,9 @@ classDiagram
     RoleDashboardCreator <|-- CitizenDashboardCreator
     RoleDashboardCreator <|-- ProviderDashboardCreator
     RoleDashboardCreator <|-- AdminDashboardCreator
-    DashboardUI --> DashboardFactory : calls
+    RoleDashboardCreator --> NavigationConfig : returns
+    DashboardUI --> RoleDashboardFactory : calls
+    DashboardUI --> NavigationConfig : uses for nav
     DashboardUI --> RoleDashboardCreator : uses product
 ```
 

@@ -152,16 +152,12 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  const login = useCallback(async (email, password, selectedRole) => {
+  const login = useCallback(async (email, password) => {
     const normalizedEmail = normalizeEmail(email);
     const row = await getUserByCredentials(normalizedEmail, password);
 
     if (!row) {
       throw new Error('Invalid username or password.');
-    }
-
-    if (selectedRole && row.role !== normalizeRole(selectedRole)) {
-      throw new Error(`This account is not registered as ${normalizeRole(selectedRole)}.`);
     }
 
     const appUser = makeAppUser({
@@ -185,7 +181,10 @@ export function AuthProvider({ children }) {
     }
 
     const normalizedEmail = normalizeEmail(email);
-    if (!row) {
+    let existing = await getUserByEmail(normalizedEmail);
+    let row;
+
+    if (!existing) {
       row = await createUser({
         name,
         email: normalizedEmail,
@@ -193,8 +192,8 @@ export function AuthProvider({ children }) {
         role,
       });
     } else {
-      await updateUserRole(row.id, role);
-      row.role = normalizeRole(role);
+      await updateUserRole(existing.id, role);
+      row = { ...existing, role: normalizeRole(role) };
     }
 
     const appUser = makeAppUser({

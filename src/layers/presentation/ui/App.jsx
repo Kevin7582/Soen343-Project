@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AuthProvider, ROLES, useAuth } from '../context/AuthContext';
 import { RentalProvider, useRental } from '../context/RentalContext';
 import AdminDashboard from "./AdminDashboard";
+import AdminDashboardService from '../../service-layer/adminDashboardService';
 import TransitMap from './TransitMap';
 import RecommendationService from '../../service-layer/recommendationService';
 import { createRoleDashboardCreator } from './roleDashboardFactory';
@@ -12,6 +13,7 @@ import {
   completeParkingReservation,
   cancelParkingReservation,
   fetchParkingSpots,
+  fetchProviderVehicles,
   fetchProviderRentals,
   fetchTransitRoutes,
   fetchUserParkingReservation,
@@ -22,28 +24,6 @@ import {
 } from '../../service-layer/mobilityService';
 import VehicleMap from './VehicleMap';
 import ParkingMap from './ParkingMap';
-
-const TAB_LABELS = {
-  dashboard: 'Dashboard',
-  mobility: 'Mobility',
-  parking: 'Parking',
-  transit: 'Transit',
-  analytics: 'Analytics',
-  activeRental: 'Active Rental',
-  home: 'Home',
-  vehicles: 'Vehicles',
-  rentalData: 'Rentals',
-  rentalAnalytics: 'Rental Analytics',
-  gatewayAnalytics: 'Gateway Analytics',
-  profile: 'Profile',
-  adminDashboard: 'Admin Dashboard',
-};
-
-const FALLBACK_PROVIDER_VEHICLES = [
-  { id: 'v1', type: 'scooter', name: 'Scooter #101', status: 'available', maintenance: 'ok' },
-  { id: 'v2', type: 'scooter', name: 'Scooter #102', status: 'available', maintenance: 'ok' },
-  { id: 'v3', type: 'bike', name: 'Bike #201', status: 'maintenance', maintenance: 'pending' },
-];
 
 export default function App() {
   return (
@@ -89,7 +69,7 @@ function AuthScreen() {
       setSubmitting(true);
 
       if (mode === 'login') {
-        await login(email.trim(), password, role);
+        await login(email.trim(), password);
       } else {
         const proceed = window.confirm('Create a new account with these values?');
         if (!proceed) return;
@@ -119,11 +99,8 @@ function AuthScreen() {
 
   const toggleMode = () => {
     clearFormError();
-    setMode((prev) => {
-      const next = prev === 'login' ? 'register' : 'login';
-      if (next === 'register' && role === ROLES.ADMIN) setRole(ROLES.CITIZEN);
-      return next;
-    });
+    setRole(ROLES.CITIZEN);
+    setMode((prev) => (prev === 'login' ? 'register' : 'login'));
   };
 
   const isRegisterMode = mode === 'register';
@@ -146,16 +123,15 @@ function AuthScreen() {
           <label>Email<input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" type="text" /></label>
           <label>Password<input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter password" type="password" /></label>
 
-          <div>
-            <label>I am a...</label>
-            <div className="role-row" style={{ marginTop: 8, gridTemplateColumns: isRegisterMode ? '1fr 1fr' : 'repeat(3, 1fr)' }}>
-              <RoleButton label="Citizen" active={role === ROLES.CITIZEN} onClick={() => setRole(ROLES.CITIZEN)} />
-              <RoleButton label="Provider" active={role === ROLES.MOBILITY_PROVIDER} onClick={() => setRole(ROLES.MOBILITY_PROVIDER)} />
-              {!isRegisterMode && (
-                <RoleButton label="Admin" active={role === ROLES.ADMIN} onClick={() => setRole(ROLES.ADMIN)} />
-              )}
+          {isRegisterMode && (
+            <div>
+              <label>I am a...</label>
+              <div className="role-row" style={{ marginTop: 8, gridTemplateColumns: '1fr 1fr' }}>
+                <RoleButton label="Citizen" active={role === ROLES.CITIZEN} onClick={() => setRole(ROLES.CITIZEN)} />
+                <RoleButton label="Provider" active={role === ROLES.MOBILITY_PROVIDER} onClick={() => setRole(ROLES.MOBILITY_PROVIDER)} />
+              </div>
             </div>
-          </div>
+          )}
 
           {!!formError && <div className="auth-error">{formError}</div>}
 
@@ -200,7 +176,7 @@ function Dashboard() {
     rentalError,
     clearError,
   } = useRental();
-  const [tab, setTab] = useState(user?.role === 'user' ? 'dashboard' : 'home');
+  const [tab, setTab] = useState(() => createRoleDashboardCreator(user?.role).createDefaultTab());
   const [vehicleType, setVehicleType] = useState('all');
   const [radius, setRadius] = useState('2');
   const [paymentDone, setPaymentDone] = useState(false);
@@ -209,19 +185,25 @@ function Dashboard() {
   const [parkingDuration, setParkingDuration] = useState('1');
   const [mobilityError, setMobilityError] = useState('');
 
-  const { loadingData, vehiclesData, transitRoutes, parkingSpots, providerRentals, refreshDashboardData } = useDashboardData();
+  const { loadingData, vehiclesData, transitRoutes, parkingSpots, providerRentals, refreshDashboardData } = useDashboardData(user);
 
   const roleDashboardCreator = useMemo(
     () => createRoleDashboardCreator(user?.role),
     [user?.role]
   );
-  const tabs = useMemo(() => roleDashboardCreator.createTabs(), [roleDashboardCreator]);
+  const navigationConfig = useMemo(
+    () => roleDashboardCreator.createNavigationConfig(),
+    [roleDashboardCreator]
+  );
+  const tabs = navigationConfig.tabs;
+  const tabLabels = navigationConfig.tabLabels;
+  const defaultTab = navigationConfig.defaultTab;
 
   useEffect(() => {
     if (!tabs.includes(tab)) {
-      setTab(tabs[0] || 'dashboard');
+      setTab(defaultTab);
     }
-  }, [tab, tabs]);
+  }, [defaultTab, tab, tabs]);
 
   useEffect(() => {
     let mounted = true;
@@ -417,8 +399,11 @@ function Dashboard() {
     renderProvider: () => (
       <ProviderViews
         tab={tab}
+        user={user}
+        loadingData={loadingData}
         vehiclesData={vehiclesData}
         providerRentals={providerRentals}
+        onFleetUpdated={refreshDashboardData}
       />
     ),
     renderAdmin: () => <AdminViews tab={tab} />,
@@ -426,7 +411,14 @@ function Dashboard() {
 
   return (
     <div className="dashboard">
-      <Sidebar user={user} tabs={tabs} activeTab={tab} onSelectTab={setTab} onLogout={logout} />
+      <Sidebar
+        user={user}
+        tabs={tabs}
+        tabLabels={tabLabels}
+        activeTab={tab}
+        onSelectTab={setTab}
+        onLogout={logout}
+      />
 
       <main className="content">
         {loadingData && <div className="panel">Loading data from Supabase...</div>}
@@ -732,7 +724,7 @@ const paymentStyles = {
   },
 };
 
-function Sidebar({ user, tabs, activeTab, onSelectTab, onLogout }) {
+function Sidebar({ user, tabs, tabLabels, activeTab, onSelectTab, onLogout }) {
   const roleLabel = user?.role === 'provider' ? 'Provider' : user?.role === 'admin' ? 'Admin' : 'Citizen';
   return (
     <aside className="sidebar">
@@ -749,7 +741,7 @@ function Sidebar({ user, tabs, activeTab, onSelectTab, onLogout }) {
             className={`btn nav-btn ${activeTab === tabName ? 'nav-btn-active' : ''}`}
             onClick={() => onSelectTab(tabName)}
           >
-            {TAB_LABELS[tabName] || tabName}
+            {tabLabels[tabName] || tabName}
           </button>
         ))}
       </div>
@@ -791,6 +783,10 @@ function CitizenViews({
     <>
       {tab === 'dashboard' && (
         <DashboardPage user={user} onSelectTab={onSelectTab} reservation={reservation} activeRental={activeRental} vehiclesData={vehiclesData} parkingSpots={parkingSpots} />
+      )}
+
+      {tab === 'recommendations' && (
+        <RecommendationsView user={user} onSelectTab={onSelectTab} />
       )}
 
       {tab === 'mobility' && (
@@ -1369,16 +1365,16 @@ function AnalyticsPage({ vehiclesData, parkingSpots }) {
           {/* Key Metrics */}
           <div className="stat-row fade-up">
             <div className="stat-badge">
-              <div className="stat-badge-value">{rentalStats.total}</div>
-              <div className="stat-badge-label">Total Rentals</div>
+              <div className="stat-badge-value">{rentalStats.completed}</div>
+              <div className="stat-badge-label">Completed Trips</div>
             </div>
             <div className="stat-badge">
               <div className="stat-badge-value">{rentalStats.active}</div>
               <div className="stat-badge-label">Active Now</div>
             </div>
             <div className="stat-badge">
-              <div className="stat-badge-value">${rentalStats.revenue.toFixed(2)}</div>
-              <div className="stat-badge-label">Revenue</div>
+              <div className="stat-badge-value">{availableVehicles}</div>
+              <div className="stat-badge-label">Vehicles Available</div>
             </div>
             <div className="stat-badge">
               <div className="stat-badge-value">{bixiStats?.totalStations ?? 0}</div>
@@ -1496,7 +1492,7 @@ function ChartBar({ label, value, max, color, suffix = '' }) {
   );
 }
 
-function ProviderViews({ tab, vehiclesData, providerRentals }) {
+function ProviderViews({ tab, user, loadingData, vehiclesData, providerRentals, onFleetUpdated }) {
   return (
     <>
       {tab === 'home' && (
@@ -1522,7 +1518,14 @@ function ProviderViews({ tab, vehiclesData, providerRentals }) {
         </Section>
       )}
 
-      {tab === 'vehicles' && <ProviderVehicles initialVehicles={vehiclesData} />}
+      {tab === 'vehicles' && (
+        <ProviderVehicles
+          providerId={user?.id}
+          loadingData={loadingData}
+          initialVehicles={vehiclesData}
+          onFleetUpdated={onFleetUpdated}
+        />
+      )}
       {tab === 'rentalData' && <ProviderRentalData rentals={providerRentals} />}
     </>
   );
@@ -1596,85 +1599,104 @@ function RentalStepIndicator({ reservation, activeRental, paymentDone }) {
   );
 }
 
-function ProviderVehicles({ initialVehicles = [] }) {
+function ProviderVehicles({ providerId, initialVehicles = [], loadingData = false, onFleetUpdated }) {
   const [vehicles, setVehicles] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({ type: '', location: '', rate_per_min: '' });
   const [showAddForm, setShowAddForm] = useState(false);
   const [addForm, setAddForm] = useState({ type: 'scooter', location: '', rate_per_min: '0.25' });
 
   useEffect(() => {
-    async function load() {
-      const { data, error } = await supabase.from('vehicles').select('*');
-      if (!error && data) {
-        setVehicles(data);
-      } else {
-        setVehicles(FALLBACK_PROVIDER_VEHICLES);
-      }
-      setLoading(false);
-    }
-    load();
-  }, []);
+    setVehicles(initialVehicles);
+  }, [initialVehicles]);
+
+  const resolvedProviderId = Number(providerId);
 
   const addVehicle = async () => {
-    if (!addForm.location.trim()) return;
+    if (!addForm.location.trim() || !Number.isFinite(resolvedProviderId)) return;
     const newVehicle = {
       type: addForm.type.toLowerCase(),
       location: addForm.location.trim(),
       available: true,
       rate_per_min: parseFloat(addForm.rate_per_min) || 0.25,
-      provider_id: 1,
+      provider_id: resolvedProviderId,
     };
     const { data, error } = await supabase.from('vehicles').insert(newVehicle).select().single();
     if (!error && data) {
       setVehicles((prev) => [...prev, data]);
       setShowAddForm(false);
       setAddForm({ type: 'scooter', location: '', rate_per_min: '0.25' });
+      await onFleetUpdated?.();
     }
   };
 
   const startEdit = (vehicle) => {
+    const currentRate = vehicle.rate_per_min ?? vehicle.ratePerMin ?? 0.25;
     setEditingId(vehicle.id);
     setEditForm({
       type: vehicle.type || 'scooter',
       location: vehicle.location || '',
-      rate_per_min: String(vehicle.rate_per_min ?? 0.25),
+      rate_per_min: String(currentRate),
     });
   };
 
   const saveEdit = async (vehicleId) => {
+    if (!Number.isFinite(resolvedProviderId)) return;
     const updates = {
       type: editForm.type.toLowerCase(),
       location: editForm.location.trim(),
       rate_per_min: parseFloat(editForm.rate_per_min) || 0.25,
     };
-    const { error } = await supabase.from('vehicles').update(updates).eq('id', vehicleId);
+    const { error } = await supabase
+      .from('vehicles')
+      .update(updates)
+      .eq('id', vehicleId)
+      .eq('provider_id', resolvedProviderId);
     if (!error) {
       setVehicles((prev) => prev.map((v) => (v.id === vehicleId ? { ...v, ...updates } : v)));
       setEditingId(null);
+      await onFleetUpdated?.();
     }
   };
 
   const toggleVehicleStatus = async (vehicleId) => {
+    if (!Number.isFinite(resolvedProviderId)) return;
     const vehicle = vehicles.find((v) => v.id === vehicleId);
     if (!vehicle) return;
-    const newAvailable = !vehicle.available;
-    const { error } = await supabase.from('vehicles').update({ available: newAvailable }).eq('id', vehicleId);
+    const isAvailable = typeof vehicle.available === 'boolean' ? vehicle.available : vehicle.status === 'available';
+    const newAvailable = !isAvailable;
+    const { error } = await supabase
+      .from('vehicles')
+      .update({ available: newAvailable })
+      .eq('id', vehicleId)
+      .eq('provider_id', resolvedProviderId);
     if (!error) {
-      setVehicles((prev) => prev.map((v) => (v.id === vehicleId ? { ...v, available: newAvailable } : v)));
+      setVehicles((prev) =>
+        prev.map((v) =>
+          v.id === vehicleId
+            ? { ...v, available: newAvailable, status: newAvailable ? 'available' : 'unavailable' }
+            : v
+        )
+      );
+      await onFleetUpdated?.();
     }
   };
 
   const removeVehicle = async (vehicleId) => {
+    if (!Number.isFinite(resolvedProviderId)) return;
     if (!window.confirm('Remove this vehicle?')) return;
-    const { error } = await supabase.from('vehicles').delete().eq('id', vehicleId);
+    const { error } = await supabase
+      .from('vehicles')
+      .delete()
+      .eq('id', vehicleId)
+      .eq('provider_id', resolvedProviderId);
     if (!error) {
       setVehicles((prev) => prev.filter((v) => v.id !== vehicleId));
+      await onFleetUpdated?.();
     }
   };
 
-  if (loading) return (
+  if (loadingData) return (
     <Section title="Vehicles" subtitle="Fleet management">
       <div className="panel">Loading...</div>
     </Section>
@@ -1709,6 +1731,10 @@ function ProviderVehicles({ initialVehicles = [] }) {
         </div>
       )}
 
+      {!loadingData && vehicles.length === 0 && (
+        <div className="panel">No vehicles found for your provider account yet.</div>
+      )}
+
       <div className="grid-2">
         {vehicles.map((vehicle) => (
           <div className="card stack-8" key={vehicle.id}>
@@ -1739,8 +1765,8 @@ function ProviderVehicles({ initialVehicles = [] }) {
               <>
                 <h3>{vehicle.type} #{vehicle.id}</h3>
                 <p>Location: {vehicle.location || 'N/A'}</p>
-                <p>Rate: ${vehicle.rate_per_min ?? 0.25}/min</p>
-                <p>Status: {vehicle.available ? 'available' : 'unavailable'}</p>
+                <p>Rate: ${vehicle.rate_per_min ?? vehicle.ratePerMin ?? 0.25}/min</p>
+                <p>Status: {(typeof vehicle.available === 'boolean' ? vehicle.available : vehicle.status === 'available') ? 'available' : 'unavailable'}</p>
                 <div className="row gap-8 wrap">
                   <button className="btn btn-soft" onClick={() => startEdit(vehicle)}>Edit</button>
                   <button className="btn btn-soft" onClick={() => toggleVehicleStatus(vehicle.id)}>Toggle status</button>
@@ -1754,6 +1780,13 @@ function ProviderVehicles({ initialVehicles = [] }) {
     </Section>
   );
 }
+function formatRentalDate(raw) {
+  if (!raw || raw === 'N/A') return 'N/A';
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+}
+
 function ProviderRentalData({ rentals = [] }) {
   return (
     <Section title="Rental records" subtitle="Manage and view rental data">
@@ -1761,7 +1794,11 @@ function ProviderRentalData({ rentals = [] }) {
 
       <div className="grid-2">
         {rentals.map((record) => (
-          <Card key={record.id} title={record.vehicle} text={`${record.user} | ${record.start} -> ${record.end} | $${record.cost}`} />
+          <Card
+            key={record.id}
+            title={record.vehicle}
+            text={`${record.user} — ${formatRentalDate(record.start)} → ${formatRentalDate(record.end)} — $${record.cost.toFixed(2)}`}
+          />
         ))}
       </div>
     </Section>
@@ -1777,10 +1814,10 @@ function GatewayAnalytics() {
   const [log, setLog] = useState([]);
 
   useEffect(() => {
-    const load = async () => {
-      const { gateway } = await import('../../api-gateway/apiClient');
-      setStats(gateway.getStats());
-      setLog(gateway.getRequestLog().slice(0, 20));
+    const load = () => {
+      const snapshot = AdminDashboardService.getGatewayMonitoringSnapshot(20);
+      setStats(snapshot.stats);
+      setLog(snapshot.log);
     };
     load();
     const interval = setInterval(load, 5000);
@@ -1921,7 +1958,7 @@ function RecommendationsView({ user, onSelectTab }) {
                     title={v.name || `${v.type} #${v.id}`}
                     text={`${v.type} | ${v.location || 'Nearby'} | $${v.rate_per_min ?? 0.25}/min`}
                     action={
-                      <button className="btn btn-primary" onClick={() => onSelectTab('search')}>
+                      <button className="btn btn-primary" onClick={() => onSelectTab('mobility')}>
                         Find & reserve
                       </button>
                     }
@@ -2028,7 +2065,7 @@ function Profile({ user, role, onUpdatePreferences }) {
   );
 }
 
-function useDashboardData() {
+function useDashboardData(user) {
   const [vehiclesData, setVehiclesData] = useState([]);
   const [transitRoutes, setTransitRoutes] = useState([]);
   const [parkingSpots, setParkingSpots] = useState([]);
@@ -2038,11 +2075,13 @@ function useDashboardData() {
   const refreshDashboardData = useCallback(async () => {
     try {
       setLoadingData(true);
+      const isProvider = user?.role === ROLES.MOBILITY_PROVIDER;
+      const providerId = user?.id;
       const [vehicles, routes, spots, rentals] = await Promise.all([
-        fetchVehicles(),
+        isProvider ? fetchProviderVehicles(providerId) : fetchVehicles(),
         fetchTransitRoutes(),
         fetchParkingSpots(),
-        fetchProviderRentals(),
+        isProvider ? fetchProviderRentals(providerId) : Promise.resolve([]),
       ]);
       setVehiclesData(vehicles);
       setTransitRoutes(routes);
@@ -2051,7 +2090,7 @@ function useDashboardData() {
     } finally {
       setLoadingData(false);
     }
-  }, []);
+  }, [user?.id, user?.role]);
 
   useEffect(() => {
     refreshDashboardData();

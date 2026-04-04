@@ -124,22 +124,22 @@ class SupabaseRealtimeSubject {
 
 class RoleDashboardCreator {
   <<abstract>>
-  +createTabs(): string[]
+  +createNavigationConfig(): NavigationConfig
   +createMainContent(renderers): JSX
 }
 
 class CitizenDashboardCreator {
-  +createTabs(): string[]
+  +createNavigationConfig(): NavigationConfig
   +createMainContent(renderers): JSX
 }
 
 class ProviderDashboardCreator {
-  +createTabs(): string[]
+  +createNavigationConfig(): NavigationConfig
   +createMainContent(renderers): JSX
 }
 
 class AdminDashboardCreator {
-  +createTabs(): string[]
+  +createNavigationConfig(): NavigationConfig
   +createMainContent(renderers): JSX
 }
 
@@ -147,6 +147,12 @@ class RoleDashboardFactory {
   +createRoleDashboardCreator(role): RoleDashboardCreator
 }
 note for RoleDashboardFactory "Factory Method"
+
+class NavigationConfig {
+  +defaultTab: string
+  +tabs: string[]
+  +tabLabels: object
+}
 
 class Vehicle {
   +id: string
@@ -206,6 +212,7 @@ RoleDashboardFactory --> RoleDashboardCreator
 RoleDashboardCreator <|-- CitizenDashboardCreator
 RoleDashboardCreator <|-- ProviderDashboardCreator
 RoleDashboardCreator <|-- AdminDashboardCreator
+RoleDashboardCreator --> NavigationConfig
 
 AdminDashboard --> DashboardFacade
 DashboardFacade <|.. AdminDashboardService
