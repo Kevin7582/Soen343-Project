@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { inflateRawSync } from 'node:zlib';
 import dotenv from 'dotenv';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -10,7 +11,13 @@ dotenv.config({ path: resolve(__dirname, '../.env') });
 const PORT = Number(process.env.STM_PROXY_PORT || 8090);
 const HOST = process.env.STM_PROXY_HOST || '127.0.0.1';
 const GOOGLE_SERVER_KEY = process.env.GOOGLE_MAPS_SERVER_API_KEY || '';
-const STM_API_KEY = (process.env.STM_API_KEY || '').trim();
+const STM_API_KEY = (process.env.STM_API_KEY || process.env.VITE_STM_API_KEY || '').trim();
+const STM_SCHEDULE_API_URL = (process.env.STM_SCHEDULE_API_URL || '').trim();
+const STM_GTFS_URL = (process.env.STM_GTFS_URL || 'https://www.stm.info/sites/default/files/gtfs/gtfs_stm.zip').trim();
+const GTFS_CACHE_TTL_MS = Number(process.env.STM_GTFS_CACHE_TTL_MS || 6 * 60 * 60 * 1000);
+
+let gtfsCache = { data: null, fetchedAt: 0 };
+const gtfsScheduleResultCache = new Map();
 
 function sendJson(res, status, payload) {
   res.writeHead(status, {
@@ -41,6 +48,232 @@ function toNum(v) {
 
 function cleanText(v) {
   return String(v || '').replace(/<[^>]*>/g, '').trim();
+}
+
+function parseCsvLine(line) {
+  const cells = [];
+  let current = '';
+  let quoted = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (quoted && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (ch === ',' && !quoted) {
+      cells.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  cells.push(current);
+  return cells;
+}
+
+function parseCsv(text) {
+  const lines = String(text || '').split(/\r?\n/).filter(Boolean);
+  if (lines.length === 0) return [];
+  const header = parseCsvLine(lines[0]);
+  return lines.slice(1).map((line) => {
+    const values = parseCsvLine(line);
+    return Object.fromEntries(header.map((key, index) => [key, values[index] ?? '']));
+  });
+}
+
+function parseGtfsTime(value) {
+  const [h, m, s] = String(value || '').split(':').map(Number);
+  if (![h, m, s].every(Number.isFinite)) return null;
+  return h * 3600 + m * 60 + s;
+}
+
+function secondsToTime(seconds) {
+  const safe = Math.max(0, Number(seconds) || 0);
+  const h = Math.floor(safe / 3600) % 24;
+  const m = Math.floor((safe % 3600) / 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function currentSecondsOfDay() {
+  const now = new Date();
+  return now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+}
+
+function metroLineName(route) {
+  const shortName = String(route?.route_short_name || route?.route_id || '');
+  if (shortName === '1') return 'Green Line';
+  if (shortName === '2') return 'Orange Line';
+  if (shortName === '4') return 'Yellow Line';
+  if (shortName === '5') return 'Blue Line';
+  return route?.route_long_name || `Line ${shortName}`;
+}
+
+function findEndOfCentralDirectory(buffer) {
+  for (let i = buffer.length - 22; i >= 0; i -= 1) {
+    if (buffer.readUInt32LE(i) === 0x06054b50) return i;
+  }
+  throw new Error('Invalid ZIP: central directory not found');
+}
+
+function unzipSelectedTexts(buffer, wantedNames) {
+  const wanted = new Set(wantedNames.map((name) => name.toLowerCase()));
+  const found = {};
+  const eocdOffset = findEndOfCentralDirectory(buffer);
+  const totalEntries = buffer.readUInt16LE(eocdOffset + 10);
+  let cursor = buffer.readUInt32LE(eocdOffset + 16);
+
+  for (let i = 0; i < totalEntries; i += 1) {
+    if (buffer.readUInt32LE(cursor) !== 0x02014b50) break;
+
+    const method = buffer.readUInt16LE(cursor + 10);
+    const compressedSize = buffer.readUInt32LE(cursor + 20);
+    const fileNameLength = buffer.readUInt16LE(cursor + 28);
+    const extraLength = buffer.readUInt16LE(cursor + 30);
+    const commentLength = buffer.readUInt16LE(cursor + 32);
+    const localHeaderOffset = buffer.readUInt32LE(cursor + 42);
+    const fileName = buffer.toString('utf8', cursor + 46, cursor + 46 + fileNameLength);
+    const baseName = fileName.split('/').pop().toLowerCase();
+
+    if (wanted.has(baseName)) {
+      if (buffer.readUInt32LE(localHeaderOffset) !== 0x04034b50) {
+        throw new Error(`Invalid ZIP local header for ${fileName}`);
+      }
+      const localFileNameLength = buffer.readUInt16LE(localHeaderOffset + 26);
+      const localExtraLength = buffer.readUInt16LE(localHeaderOffset + 28);
+      const dataStart = localHeaderOffset + 30 + localFileNameLength + localExtraLength;
+      const compressed = buffer.subarray(dataStart, dataStart + compressedSize);
+      const data = method === 0 ? compressed : method === 8 ? inflateRawSync(compressed) : null;
+      if (!data) throw new Error(`Unsupported ZIP compression method ${method} for ${fileName}`);
+      found[baseName] = data.toString('utf8');
+    }
+
+    cursor += 46 + fileNameLength + extraLength + commentLength;
+  }
+
+  for (const name of wanted) {
+    if (!found[name]) throw new Error(`GTFS file missing from ZIP: ${name}`);
+  }
+
+  return found;
+}
+
+async function loadStmGtfs() {
+  const now = Date.now();
+  if (gtfsCache.data && now - gtfsCache.fetchedAt < GTFS_CACHE_TTL_MS) return gtfsCache.data;
+
+  const response = await fetch(STM_GTFS_URL);
+  if (!response.ok) {
+    throw new Error(`STM GTFS download failed: ${response.status} ${response.statusText}`);
+  }
+
+  const zipBuffer = Buffer.from(await response.arrayBuffer());
+  const files = unzipSelectedTexts(zipBuffer, ['routes.txt', 'trips.txt', 'stops.txt', 'stop_times.txt']);
+  const routes = new Map(parseCsv(files['routes.txt']).map((row) => [row.route_id, row]));
+  const trips = new Map(parseCsv(files['trips.txt']).map((row) => [row.trip_id, row]));
+  const stops = new Map(parseCsv(files['stops.txt']).map((row) => [row.stop_id, row]));
+
+  const stopTimesLines = files['stop_times.txt'].split(/\r?\n/).filter(Boolean);
+  const stopTimesHeader = parseCsvLine(stopTimesLines.shift() || '');
+
+  gtfsCache = {
+    data: { routes, trips, stops, stopTimesHeader, stopTimesLines },
+    fetchedAt: now,
+  };
+  return gtfsCache.data;
+}
+
+function buildGtfsSchedules(gtfs, { mode, query, routeId, stopId, limit }) {
+  const minuteBucket = Math.floor(Date.now() / 60000);
+  const normalizedQuery = String(query || '').trim().toLowerCase();
+  const cacheKey = `${mode || '*'}|${normalizedQuery || '*'}|${routeId || '*'}|${stopId || '*'}|${limit}|${minuteBucket}`;
+  if (gtfsScheduleResultCache.has(cacheKey)) return gtfsScheduleResultCache.get(cacheKey);
+  if (gtfsScheduleResultCache.size > 20) gtfsScheduleResultCache.clear();
+
+  const headerIndex = Object.fromEntries(gtfs.stopTimesHeader.map((name, index) => [name, index]));
+  const nowSeconds = currentSecondsOfDay();
+  const maxSeconds = nowSeconds + 3 * 60 * 60;
+  const earlyStopSeconds = nowSeconds + 15 * 60;
+  const schedules = [];
+  const metroByRoute = new Map();
+
+  for (const line of gtfs.stopTimesLines) {
+    const row = parseCsvLine(line);
+    const tripId = row[headerIndex.trip_id];
+    const departureTime = row[headerIndex.departure_time];
+    const departureSeconds = parseGtfsTime(departureTime);
+    if (departureSeconds === null || departureSeconds < nowSeconds || departureSeconds > maxSeconds) continue;
+
+    const stopTimeStopId = row[headerIndex.stop_id];
+    if (stopId && stopTimeStopId !== stopId) continue;
+
+    const trip = gtfs.trips.get(tripId);
+    if (!trip) continue;
+    const route = gtfs.routes.get(trip.route_id);
+    if (routeId && route?.route_id !== routeId && route?.route_short_name !== routeId) continue;
+
+    const stop = gtfs.stops.get(stopTimeStopId);
+    const routeType = String(route?.route_type ?? '');
+    const isMetro = routeType === '1';
+    const isBus = routeType === '3';
+    if (mode === 'metro' && !isMetro) continue;
+    if (mode === 'bus' && !isBus) continue;
+
+    if (normalizedQuery) {
+      const haystack = [
+        route?.route_id,
+        route?.route_short_name,
+        route?.route_long_name,
+        trip.trip_headsign,
+        stop?.stop_id,
+        stop?.stop_name,
+      ].filter(Boolean).join(' ').toLowerCase();
+      if (!haystack.includes(normalizedQuery)) continue;
+    }
+
+    schedules.push({
+      id: `${tripId}-${stopTimeStopId}-${departureTime}`,
+      routeId: route?.route_id || trip.route_id,
+      route: route?.route_short_name || route?.route_long_name || trip.route_id,
+      headsign: trip.trip_headsign || route?.route_long_name || '',
+      stopId: stopTimeStopId,
+      stopName: stop?.stop_name || stopTimeStopId,
+      departureTime: secondsToTime(departureSeconds),
+      rawDepartureTime: departureTime,
+    });
+    const latest = schedules[schedules.length - 1];
+
+    if (mode === 'metro' && !normalizedQuery && !routeId && !stopId) {
+      const metroKey = route?.route_short_name || route?.route_id || trip.route_id;
+      const current = metroByRoute.get(metroKey);
+      if (!current || departureSeconds < parseGtfsTime(current.rawDepartureTime)) {
+        metroByRoute.set(metroKey, {
+          ...latest,
+          routeLabel: metroLineName(route),
+        });
+      }
+      if (metroByRoute.size >= 4 && departureSeconds > earlyStopSeconds) break;
+    }
+
+    if (mode !== 'metro' && !normalizedQuery && !routeId && !stopId && schedules.length >= limit * 8 && departureSeconds > earlyStopSeconds) break;
+  }
+
+  if (mode === 'metro' && !normalizedQuery && !routeId && !stopId && metroByRoute.size > 0) {
+    const metroResult = [...metroByRoute.values()]
+      .sort((a, b) => Number(a.routeId) - Number(b.routeId))
+      .slice(0, limit);
+    gtfsScheduleResultCache.set(cacheKey, metroResult);
+    return metroResult;
+  }
+
+  const result = schedules
+    .sort((a, b) => parseGtfsTime(a.rawDepartureTime) - parseGtfsTime(b.rawDepartureTime))
+    .slice(0, limit);
+  gtfsScheduleResultCache.set(cacheKey, result);
+  return result;
 }
 
 function reliability(transfers, walkKm) {
@@ -168,6 +401,63 @@ async function handleStmStatus(_req, res) {
   }
 }
 
+async function handleStmSchedules(req, res) {
+  const url = new URL(req.url, `http://${HOST}:${PORT}`);
+  const routeId = url.searchParams.get('routeId') || '';
+  const stopId = url.searchParams.get('stopId') || '';
+  const query = url.searchParams.get('query') || '';
+  const mode = ['metro', 'bus', 'all'].includes(url.searchParams.get('mode'))
+    ? url.searchParams.get('mode')
+    : 'metro';
+  const limit = Math.max(1, Math.min(50, Number(url.searchParams.get('limit') || 12)));
+
+  if (!STM_SCHEDULE_API_URL) {
+    try {
+      const gtfs = await loadStmGtfs();
+      sendJson(res, 200, {
+        schedules: buildGtfsSchedules(gtfs, { mode, query, routeId, stopId, limit }),
+        source: 'stm-gtfs',
+        updatedAt: new Date().toISOString(),
+        gtfsUrl: STM_GTFS_URL,
+        mode,
+        query,
+      });
+    } catch (err) {
+      sendJson(res, 502, {
+        schedules: [],
+        source: 'stm-gtfs',
+        error: err?.message || 'STM GTFS schedule fetch failed',
+      });
+    }
+    return;
+  }
+
+  try {
+    const scheduleUrl = new URL(STM_SCHEDULE_API_URL);
+    if (routeId) scheduleUrl.searchParams.set('routeId', routeId);
+    if (stopId) scheduleUrl.searchParams.set('stopId', stopId);
+    if (query) scheduleUrl.searchParams.set('query', query);
+    scheduleUrl.searchParams.set('mode', mode);
+    scheduleUrl.searchParams.set('limit', String(limit));
+
+    const stmRes = await fetch(scheduleUrl);
+    if (!stmRes.ok) {
+      const text = await stmRes.text();
+      sendJson(res, 502, { schedules: [], source: 'stm-schedule-api', error: text });
+      return;
+    }
+
+    const data = await stmRes.json();
+    sendJson(res, 200, {
+      schedules: Array.isArray(data?.schedules) ? data.schedules : Array.isArray(data) ? data : [],
+      source: data?.source || 'stm-schedule-api',
+      updatedAt: data?.updatedAt || new Date().toISOString(),
+    });
+  } catch (err) {
+    sendJson(res, 502, { schedules: [], source: 'stm-schedule-api', error: err?.message || 'STM schedule fetch failed' });
+  }
+}
+
 const server = createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     sendJson(res, 200, { ok: true });
@@ -179,6 +469,8 @@ const server = createServer(async (req, res) => {
       ok: true,
       mode: 'google-transit',
       hasGoogleServerKey: Boolean(GOOGLE_SERVER_KEY),
+      hasStmScheduleApi: Boolean(STM_SCHEDULE_API_URL),
+      hasStmGtfsUrl: Boolean(STM_GTFS_URL),
     });
     return;
   }
@@ -190,6 +482,11 @@ const server = createServer(async (req, res) => {
 
   if (req.url === '/stm/status' && req.method === 'GET') {
     await handleStmStatus(req, res);
+    return;
+  }
+
+  if (req.url.startsWith('/stm/schedules') && req.method === 'GET') {
+    await handleStmSchedules(req, res);
     return;
   }
 

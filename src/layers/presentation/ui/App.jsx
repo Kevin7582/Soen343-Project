@@ -8,7 +8,7 @@ import RecommendationService from '../../service-layer/recommendationService';
 import { createRoleDashboardCreator } from './roleDashboardFactory';
 import { supabase } from '../../data-layer/supabaseClient';
 import { fetchBixiStations, getBixiStats } from '../../service-layer/bixiService';
-import { fetchStmStatus } from '../../service-layer/stmService';
+import { fetchStmSchedules, fetchStmStatus } from '../../service-layer/stmService';
 import {
   completeParkingReservation,
   cancelParkingReservation,
@@ -58,6 +58,13 @@ function AuthScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
   const { login, register, resetPassword } = useAuth();
+  const loginRoles = [
+    { label: 'Citizen', value: ROLES.CITIZEN },
+    { label: 'Provider', value: ROLES.MOBILITY_PROVIDER },
+    { label: 'City Admin', value: ROLES.CITY_ADMIN },
+    { label: 'System Admin', value: ROLES.SYSTEM_ADMIN },
+  ];
+  const registerRoles = loginRoles.slice(0, 2);
 
   const clearFormError = () => setFormError('');
 
@@ -69,7 +76,7 @@ function AuthScreen() {
       setSubmitting(true);
 
       if (mode === 'login') {
-        await login(email.trim(), password);
+        await login(email.trim(), password, role);
       } else {
         const proceed = window.confirm('Create a new account with these values?');
         if (!proceed) return;
@@ -123,15 +130,14 @@ function AuthScreen() {
           <label>Email<input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" type="text" /></label>
           <label>Password<input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter password" type="password" /></label>
 
-          {isRegisterMode && (
-            <div>
-              <label>I am a...</label>
-              <div className="role-row" style={{ marginTop: 8, gridTemplateColumns: '1fr 1fr' }}>
-                <RoleButton label="Citizen" active={role === ROLES.CITIZEN} onClick={() => setRole(ROLES.CITIZEN)} />
-                <RoleButton label="Provider" active={role === ROLES.MOBILITY_PROVIDER} onClick={() => setRole(ROLES.MOBILITY_PROVIDER)} />
-              </div>
+          <div>
+            <label>{isRegisterMode ? 'I am a...' : 'Sign in as...'}</label>
+            <div className="role-row" style={{ marginTop: 8, gridTemplateColumns: isRegisterMode ? '1fr 1fr' : '1fr 1fr' }}>
+              {(isRegisterMode ? registerRoles : loginRoles).map((item) => (
+                <RoleButton key={item.value} label={item.label} active={role === item.value} onClick={() => setRole(item.value)} />
+              ))}
             </div>
-          )}
+          </div>
 
           {!!formError && <div className="auth-error">{formError}</div>}
 
@@ -163,6 +169,21 @@ function RoleButton({ label, active, onClick }) {
   );
 }
 
+function roleDisplayName(role) {
+  if (role === ROLES.MOBILITY_PROVIDER) return 'Mobility Provider';
+  if (role === ROLES.CITY_ADMIN) return 'City Admin';
+  if (role === ROLES.SYSTEM_ADMIN) return 'System Admin';
+  if (role === ROLES.ADMIN) return 'Admin';
+  return 'Citizen';
+}
+
+function toDatetimeLocalValue(date = new Date()) {
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
+  const offsetMs = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
 function Dashboard() {
   const { user, logout, updatePreferences } = useAuth();
   const {
@@ -183,6 +204,8 @@ function Dashboard() {
   const [showPaymentGate, setShowPaymentGate] = useState(false);
   const [parkingReservation, setParkingReservation] = useState(null);
   const [parkingDuration, setParkingDuration] = useState('1');
+  const [returnPlace, setReturnPlace] = useState('');
+  const [returnTime, setReturnTime] = useState(() => toDatetimeLocalValue());
   const [mobilityError, setMobilityError] = useState('');
 
   const { loadingData, vehiclesData, transitRoutes, parkingSpots, providerRentals, refreshDashboardData } = useDashboardData(user);
@@ -280,17 +303,35 @@ function Dashboard() {
 
   const returnVehicle = async () => {
     if (!activeRental) return;
+    const cleanReturnPlace = returnPlace.trim();
+    if (!cleanReturnPlace) {
+      setMobilityError('Confirm the return place before completing the rental.');
+      return;
+    }
+
+    const confirmedReturnTime = new Date(returnTime);
+    if (Number.isNaN(confirmedReturnTime.getTime())) {
+      setMobilityError('Confirm a valid return time before completing the rental.');
+      return;
+    }
 
     const start = new Date(activeRental.startTime);
-    const elapsedMin = Math.max(1, Math.floor((Date.now() - start.getTime()) / 60000));
+    const elapsedMin = Math.max(1, Math.floor((confirmedReturnTime.getTime() - start.getTime()) / 60000));
     const totalCost = elapsedMin * (activeRental.vehicle?.ratePerMin || 0.25);
 
     clearError();
     setMobilityError('');
     try {
-      await endRental(totalCost, { transactionId: activeRental.paymentTxId });
+      await endRental(totalCost, {
+        transactionId: activeRental.paymentTxId,
+        returnPlace: cleanReturnPlace,
+        returnTime: confirmedReturnTime.toISOString(),
+        durationMinutes: elapsedMin,
+      });
       await refreshDashboardData();
       setPaymentDone(true);
+      setReturnPlace('');
+      setReturnTime(toDatetimeLocalValue());
     } catch {
       // Error is shown from context state.
     }
@@ -385,6 +426,10 @@ function Dashboard() {
         onCancelReservation={clearReservation}
         onProceedPayment={beginPayment}
         onReturnVehicle={returnVehicle}
+        returnPlace={returnPlace}
+        setReturnPlace={setReturnPlace}
+        returnTime={returnTime}
+        setReturnTime={setReturnTime}
         parkingSpots={parkingSpots}
         parkingReservation={parkingReservation}
         parkingDuration={parkingDuration}
@@ -406,7 +451,7 @@ function Dashboard() {
         onFleetUpdated={refreshDashboardData}
       />
     ),
-    renderAdmin: () => <AdminViews tab={tab} />,
+    renderAdmin: () => <AdminViews tab={tab} user={user} />,
   });
 
   return (
@@ -725,7 +770,7 @@ const paymentStyles = {
 };
 
 function Sidebar({ user, tabs, tabLabels, activeTab, onSelectTab, onLogout }) {
-  const roleLabel = user?.role === 'provider' ? 'Provider' : user?.role === 'admin' ? 'Admin' : 'Citizen';
+  const roleLabel = roleDisplayName(user?.role);
   return (
     <aside className="sidebar">
       <div>
@@ -769,6 +814,10 @@ function CitizenViews({
   onCancelReservation,
   onProceedPayment,
   onReturnVehicle,
+  returnPlace,
+  setReturnPlace,
+  returnTime,
+  setReturnTime,
   parkingSpots,
   parkingReservation,
   parkingDuration,
@@ -884,7 +933,7 @@ function CitizenViews({
 
       {tab === 'transit' && <TransitStatusPage />}
 
-      {tab === 'analytics' && <AnalyticsPage vehiclesData={vehiclesData} parkingSpots={parkingSpots} />}
+      {tab === 'analytics' && <AnalyticsPage user={user} />}
 
       {tab === 'activeRental' && (
         <Section title="Active Rental" subtitle="Track or return your vehicle">
@@ -919,6 +968,14 @@ function CitizenViews({
                 <span>{activeRental.vehicle?.type}</span>
                 <span>Started {new Date(activeRental.startTime).toLocaleTimeString()}</span>
                 <span>${activeRental.vehicle?.ratePerMin ?? 0.25}/min</span>
+              </div>
+              <div className="grid-2" style={{ marginTop: 12 }}>
+                <label>Return place
+                  <input value={returnPlace} onChange={(e) => setReturnPlace(e.target.value)} placeholder="Station, parking zone, or address" />
+                </label>
+                <label>Return time
+                  <input value={returnTime} onChange={(e) => setReturnTime(e.target.value)} type="datetime-local" />
+                </label>
               </div>
               <button className="btn btn-primary" style={{ width: 'fit-content' }} onClick={onReturnVehicle}>Return Vehicle &amp; Complete</button>
             </div>
@@ -1201,14 +1258,24 @@ function MobilityPage({ user, vehicleType, setVehicleType, radius, setRadius, ve
 /* ─── Transit Status Page (STM metro status) ─── */
 function TransitStatusPage() {
   const [stmData, setStmData] = useState(null);
+  const [scheduleData, setScheduleData] = useState(null);
+  const [busSearch, setBusSearch] = useState('');
+  const [scheduleMode, setScheduleMode] = useState('metro');
   const [loading, setLoading] = useState(true);
+  const [scheduleLoading, setScheduleLoading] = useState(false);
 
   useEffect(() => {
     let mounted = true;
     async function load() {
       try {
-        const data = await fetchStmStatus();
-        if (mounted) setStmData(data);
+        const [data, schedules] = await Promise.all([
+          fetchStmStatus(),
+          fetchStmSchedules({ mode: 'metro', limit: 4 }),
+        ]);
+        if (mounted) {
+          setStmData(data);
+          setScheduleData(schedules);
+        }
       } catch (err) {
         console.warn('STM status error:', err.message);
       } finally {
@@ -1219,6 +1286,25 @@ function TransitStatusPage() {
     const interval = setInterval(load, 60000);
     return () => { mounted = false; clearInterval(interval); };
   }, []);
+
+  const searchBusSchedules = async (event) => {
+    event.preventDefault();
+    const cleanQuery = busSearch.trim();
+    setScheduleLoading(true);
+    try {
+      const schedules = await fetchStmSchedules({
+        mode: cleanQuery ? 'bus' : 'metro',
+        query: cleanQuery,
+        limit: cleanQuery ? 6 : 4,
+      });
+      setScheduleMode(cleanQuery ? 'bus' : 'metro');
+      setScheduleData(schedules);
+    } catch (err) {
+      console.warn('STM schedule search error:', err.message);
+    } finally {
+      setScheduleLoading(false);
+    }
+  };
 
   const lines = stmData?.lines || [];
   const normalCount = lines.filter(l => l.status === 'normal').length;
@@ -1248,6 +1334,58 @@ function TransitStatusPage() {
               <div className="stat-badge-value" style={{ fontSize: '0.7rem' }}>{stmData?.source || '...'}</div>
               <div className="stat-badge-label">Source</div>
             </div>
+          </div>
+
+          <div className="panel stack-8 fade-up">
+            <h3>{scheduleMode === 'bus' ? 'Bus Departures' : 'Next Metro Departures'}</h3>
+            <form className="row wrap gap-8" onSubmit={searchBusSchedules}>
+              <input
+                value={busSearch}
+                onChange={(event) => setBusSearch(event.target.value)}
+                placeholder="Search bus route or stop"
+                style={{ minWidth: 220, flex: 1 }}
+              />
+              <button className="btn btn-soft" type="submit" disabled={scheduleLoading}>
+                {scheduleLoading ? 'Searching...' : 'Search Bus'}
+              </button>
+              <button
+                className="btn btn-soft"
+                type="button"
+                onClick={() => {
+                  setBusSearch('');
+                  setScheduleLoading(true);
+                  fetchStmSchedules({ mode: 'metro', limit: 4 })
+                    .then((schedules) => {
+                      setScheduleMode('metro');
+                      setScheduleData(schedules);
+                    })
+                    .finally(() => setScheduleLoading(false));
+                }}
+              >
+                Metro
+              </button>
+            </form>
+            <p style={{ color: 'var(--text-2)', margin: 0, fontSize: '0.86rem' }}>
+              {scheduleData?.schedules?.length
+                ? `${scheduleData.schedules.length} departures from ${scheduleData.source}.`
+                : scheduleData?.message || 'STM schedule feed is not connected yet. Showing live service status only.'}
+            </p>
+            {scheduleData?.schedules?.length > 0 && (
+              <div className="transit-schedule-list">
+                {scheduleData.schedules.slice(0, 6).map((item) => (
+                  <div key={item.id} className="transit-schedule-row">
+                    <span className={`transit-schedule-route ${scheduleMode === 'metro' ? 'is-metro' : ''}`}>
+                      {scheduleMode === 'metro' ? (item.routeLabel || `Line ${item.route}`) : item.route}
+                    </span>
+                    <div className="transit-schedule-main">
+                      <strong>{item.headsign || 'STM'}</strong>
+                      <span>{item.stopName}</span>
+                    </div>
+                    <span className="transit-schedule-time">{item.departureTime}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Line cards */}
@@ -1299,30 +1437,55 @@ function TransitStatusPage() {
 }
 
 /* ─── Analytics Page ─── */
-function AnalyticsPage({ vehiclesData, parkingSpots }) {
-  const [bixiStats, setBixiStats] = useState(null);
-  const [bixiStations, setBixiStations] = useState([]);
-  const [rentalStats, setRentalStats] = useState({ total: 0, active: 0, completed: 0, revenue: 0 });
+function AnalyticsPage({ user }) {
+  const [rentalStats, setRentalStats] = useState({
+    total: 0,
+    active: 0,
+    completed: 0,
+    totalMinutes: 0,
+    averageMinutes: 0,
+    longestMinutes: 0,
+    lastReturnPlace: '',
+    rentals: [],
+  });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let mounted = true;
     async function load() {
       try {
-        const stations = await fetchBixiStations();
-        if (!mounted) return;
-        setBixiStations(stations);
-        setBixiStats(getBixiStats(stations));
-
-        // Fetch rental stats from Supabase
-        const { data: rentals } = await supabase.from('rentals').select('*');
+        const { data: rentals } = await supabase
+          .from('rentals')
+          .select('*')
+          .eq('user_id', Number(user?.id));
         if (!mounted) return;
         if (rentals) {
+          const rentalsWithDuration = rentals.map((rental) => {
+            const start = new Date(rental.start_time || rental.created_at || Date.now()).getTime();
+            const end = rental.end_time ? new Date(rental.end_time).getTime() : Date.now();
+            const computedMinutes = Number.isFinite(start) && Number.isFinite(end)
+              ? Math.max(1, Math.round((end - start) / 60000))
+              : 0;
+            return {
+              ...rental,
+              durationMinutes: Number(rental.rental_duration_minutes || computedMinutes || 0),
+            };
+          });
+          const completed = rentalsWithDuration.filter(r => r.status === 'completed');
+          const totalMinutes = completed.reduce((sum, rental) => sum + rental.durationMinutes, 0);
+          const sortedCompleted = [...completed].sort((a, b) => new Date(b.end_time || 0) - new Date(a.end_time || 0));
+          const recentRentals = [...rentalsWithDuration]
+            .sort((a, b) => new Date(b.end_time || b.start_time || b.created_at || 0) - new Date(a.end_time || a.start_time || a.created_at || 0))
+            .slice(0, 5);
           setRentalStats({
             total: rentals.length,
             active: rentals.filter(r => r.status === 'active').length,
-            completed: rentals.filter(r => r.status === 'completed').length,
-            revenue: rentals.reduce((s, r) => s + (Number(r.price) || 0), 0),
+            completed: completed.length,
+            totalMinutes,
+            averageMinutes: completed.length ? Math.round(totalMinutes / completed.length) : 0,
+            longestMinutes: completed.reduce((max, rental) => Math.max(max, rental.durationMinutes), 0),
+            lastReturnPlace: sortedCompleted[0]?.return_place || sortedCompleted[0]?.return_location || '',
+            rentals: recentRentals,
           });
         }
       } catch (err) {
@@ -1333,31 +1496,10 @@ function AnalyticsPage({ vehiclesData, parkingSpots }) {
     }
     load();
     return () => { mounted = false; };
-  }, []);
-
-  const scooterCount = vehiclesData.filter(v => v.type === 'scooter').length;
-  const bikeCount = vehiclesData.filter(v => v.type === 'bike').length;
-  const availableVehicles = vehiclesData.filter(v => v.available || v.status === 'available').length;
-  const totalParkingSpots = parkingSpots.reduce((s, p) => s + (p.total || 0), 0);
-  const availableParking = parkingSpots.reduce((s, p) => s + (p.available || 0), 0);
-  const parkingUtilization = totalParkingSpots > 0 ? Math.round(((totalParkingSpots - availableParking) / totalParkingSpots) * 100) : 0;
-
-  // City breakdown from vehicle locations
-  const cityMap = {};
-  vehiclesData.forEach(v => {
-    const city = (v.location || 'Unknown').split(' ').pop() || 'Unknown';
-    if (!cityMap[city]) cityMap[city] = { vehicles: 0, available: 0 };
-    cityMap[city].vehicles++;
-    if (v.available || v.status === 'available') cityMap[city].available++;
-  });
-
-  // Top BIXI stations by usage
-  const topStations = [...bixiStations]
-    .sort((a, b) => (b.capacity - b.docksAvailable) - (a.capacity - a.docksAvailable))
-    .slice(0, 5);
+  }, [user?.id]);
 
   return (
-    <Section title="Analytics" subtitle="Mobility usage statistics and trends">
+    <Section title="Rental Time Analytics" subtitle="Your rental duration, active time, and completed trip history">
       {loading && <div className="panel">Loading analytics...</div>}
 
       {!loading && (
@@ -1365,112 +1507,53 @@ function AnalyticsPage({ vehiclesData, parkingSpots }) {
           {/* Key Metrics */}
           <div className="stat-row fade-up">
             <div className="stat-badge">
-              <div className="stat-badge-value">{rentalStats.completed}</div>
-              <div className="stat-badge-label">Completed Trips</div>
+              <div className="stat-badge-value">{rentalStats.totalMinutes}</div>
+              <div className="stat-badge-label">Rental Minutes</div>
             </div>
             <div className="stat-badge">
               <div className="stat-badge-value">{rentalStats.active}</div>
               <div className="stat-badge-label">Active Now</div>
             </div>
             <div className="stat-badge">
-              <div className="stat-badge-value">{availableVehicles}</div>
-              <div className="stat-badge-label">Vehicles Available</div>
+              <div className="stat-badge-value">{rentalStats.completed}</div>
+              <div className="stat-badge-label">Completed Trips</div>
             </div>
             <div className="stat-badge">
-              <div className="stat-badge-value">{bixiStats?.totalStations ?? 0}</div>
-              <div className="stat-badge-label">BIXI Stations</div>
+              <div className="stat-badge-value">{rentalStats.averageMinutes}</div>
+              <div className="stat-badge-label">Avg Minutes</div>
             </div>
           </div>
 
-          {/* Vehicle Type Distribution Chart (bar chart) */}
           <div className="panel stack-12 fade-up">
-            <h3>Vehicle Distribution</h3>
+            <h3>Rental Time Summary</h3>
             <div style={{ display: 'grid', gap: 12 }}>
-              <ChartBar label="Scooters" value={scooterCount} max={Math.max(scooterCount, bikeCount, bixiStats?.totalBikes || 0)} color="var(--accent)" />
-              <ChartBar label="Bikes" value={bikeCount} max={Math.max(scooterCount, bikeCount, bixiStats?.totalBikes || 0)} color="var(--success)" />
-              <ChartBar label="BIXI Bikes" value={bixiStats?.totalBikes || 0} max={Math.max(scooterCount, bikeCount, bixiStats?.totalBikes || 0)} color="#FF6B6B" />
-              <ChartBar label="BIXI E-Bikes" value={bixiStats?.totalEbikes || 0} max={Math.max(scooterCount, bikeCount, bixiStats?.totalBikes || 0)} color="#4ECDC4" />
+              <ChartBar label="Completed rentals" value={rentalStats.completed} max={Math.max(1, rentalStats.total)} color="var(--accent)" />
+              <ChartBar label="Longest rental" value={rentalStats.longestMinutes} max={Math.max(1, rentalStats.longestMinutes, rentalStats.averageMinutes)} color="var(--success)" suffix=" min" />
+              <ChartBar label="Average rental" value={rentalStats.averageMinutes} max={Math.max(1, rentalStats.longestMinutes, rentalStats.averageMinutes)} color="#4ECDC4" suffix=" min" />
             </div>
+            {rentalStats.lastReturnPlace && <p style={{ color: 'var(--text-3)', margin: 0 }}>Last return: {rentalStats.lastReturnPlace}</p>}
           </div>
 
-          {/* Parking Utilization Chart */}
           <div className="panel stack-12 fade-up">
-            <h3>Parking Utilization</h3>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-              <div style={{ position: 'relative', width: 120, height: 120, flexShrink: 0 }}>
-                <svg viewBox="0 0 36 36" style={{ width: '100%', height: '100%', transform: 'rotate(-90deg)' }}>
-                  <path d="M18 2.0845a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="var(--surface-alt)" strokeWidth="3" />
-                  <path d="M18 2.0845a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                    fill="none" stroke={parkingUtilization > 80 ? 'var(--error)' : parkingUtilization > 50 ? 'var(--warning)' : 'var(--success)'}
-                    strokeWidth="3" strokeDasharray={`${parkingUtilization}, 100`} strokeLinecap="round" />
-                </svg>
-                <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center' }}>
-                  <div style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--text)', fontFamily: 'var(--font-display)' }}>{parkingUtilization}%</div>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-3)' }}>utilized</div>
-                  </div>
-                </div>
-              </div>
-              <div style={{ display: 'grid', gap: 6 }}>
-                <p style={{ margin: 0, color: 'var(--text-2)' }}><strong>{availableParking}</strong> spots available of <strong>{totalParkingSpots}</strong> total</p>
-                <p style={{ margin: 0, color: 'var(--text-3)', fontSize: '0.85rem' }}>{parkingSpots.length} parking locations tracked</p>
-              </div>
-            </div>
-          </div>
-
-          {/* BIXI Utilization */}
-          {bixiStats && (
-            <div className="panel stack-12 fade-up">
-              <h3>BIXI Network</h3>
-              <div style={{ display: 'grid', gap: 12 }}>
-                <ChartBar label="Stations with bikes" value={bixiStats.stationsWithBikes} max={bixiStats.totalStations} color="var(--accent)" />
-                <ChartBar label="Empty stations" value={bixiStats.totalStations - bixiStats.stationsWithBikes} max={bixiStats.totalStations} color="var(--error)" />
-                <ChartBar label="Network utilization" value={bixiStats.utilizationPct} max={100} color="var(--success)" suffix="%" />
-              </div>
-            </div>
-          )}
-
-          {/* Usage by City */}
-          {Object.keys(cityMap).length > 0 && (
-            <div className="panel stack-12 fade-up">
-              <h3>Usage by City</h3>
-              <div className="grid-2">
-                {Object.entries(cityMap).map(([city, data]) => (
-                  <div key={city} className="card">
-                    <h3>{city}</h3>
+            <h3>Recent Rentals</h3>
+            {rentalStats.rentals.length === 0 && (
+              <p style={{ color: 'var(--text-3)', margin: 0 }}>No rental history yet.</p>
+            )}
+            {rentalStats.rentals.length > 0 && (
+              <div style={{ display: 'grid', gap: 8 }}>
+                {rentalStats.rentals.map((rental) => (
+                  <div key={rental.id} className="card">
+                    <h3>{rental.status === 'active' ? 'Active rental' : 'Completed rental'}</h3>
                     <div className="vehicle-card-meta">
-                      <span>{data.vehicles} vehicles</span>
-                      <span>{data.available} available</span>
+                      <span>{rental.durationMinutes} min</span>
+                      <span>{rental.start_time ? new Date(rental.start_time).toLocaleDateString() : 'Date unavailable'}</span>
+                      {rental.return_place && <span>{rental.return_place}</span>}
                     </div>
                   </div>
                 ))}
               </div>
-            </div>
-          )}
-
-          {/* Top BIXI Stations */}
-          {topStations.length > 0 && (
-            <div className="panel stack-12 fade-up">
-              <h3>Top BIXI Stations (by usage)</h3>
-              <div style={{ display: 'grid', gap: 8 }}>
-                {topStations.map((s, i) => {
-                  const used = s.capacity - s.docksAvailable;
-                  return (
-                    <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <span style={{ color: 'var(--text-3)', width: 20, textAlign: 'right', fontSize: '0.84rem' }}>#{i + 1}</span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name}</p>
-                        <div style={{ width: '100%', height: 5, borderRadius: 99, background: 'var(--surface-alt)', marginTop: 4 }}>
-                          <div style={{ height: '100%', width: `${s.capacity > 0 ? Math.round((used / s.capacity) * 100) : 0}%`, borderRadius: 99, background: 'var(--accent)', transition: 'width 0.3s' }} />
-                        </div>
-                      </div>
-                      <span style={{ color: 'var(--text-2)', fontSize: '0.82rem', whiteSpace: 'nowrap' }}>{used}/{s.capacity}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+            )}
+          </div>
         </>
       )}
     </Section>
@@ -1531,28 +1614,37 @@ function ProviderViews({ tab, user, loadingData, vehiclesData, providerRentals, 
   );
 }
 
-function AdminViews({ tab }) {
+function AdminViews({ tab, user }) {
+  const isCityAdmin = user?.role === ROLES.CITY_ADMIN;
+  const isSystemAdmin = user?.role === ROLES.SYSTEM_ADMIN;
+  const dashboardMode = isCityAdmin ? 'cityOperations' : isSystemAdmin ? 'systemOperations' : 'overview';
+  const title = isCityAdmin ? 'City Operations Center' : isSystemAdmin ? 'System Operations Center' : 'Operations Center';
+  const subtitle = isCityAdmin ? 'City mobility monitoring and rental analytics' : isSystemAdmin ? 'Platform health and gateway monitoring' : 'System monitoring and analytics';
   return (
     <>
       {tab === 'home' && (
-        <Section title="Operations Center" subtitle="System monitoring and analytics">
+        <Section title={title} subtitle={subtitle}>
           <div className="grid-2 fade-up">
-            <div className="quick-action" onClick={() => {}}>
-              <h3>Rental Analytics</h3>
-              <p>Usage trends, fleet demand, and active rental tracking</p>
-            </div>
-            <div className="quick-action" onClick={() => {}}>
-              <h3>Gateway Monitor</h3>
-              <p>API health, request logs, and service status</p>
-            </div>
+            {!isSystemAdmin && (
+              <div className="quick-action" onClick={() => {}}>
+                <h3>Rental Analytics</h3>
+                <p>Rental duration, fleet demand, and active rental tracking</p>
+              </div>
+            )}
+            {!isCityAdmin && (
+              <div className="quick-action" onClick={() => {}}>
+                <h3>Gateway Monitor</h3>
+                <p>API health, request logs, and service status</p>
+              </div>
+            )}
           </div>
-          <AdminDashboard mode="overview" />
+          <AdminDashboard mode={dashboardMode} />
         </Section>
       )}
 
       {tab === 'rentalAnalytics' && <RentalAnalytics />}
       {tab === 'gatewayAnalytics' && <GatewayAnalytics />}
-      {tab === 'adminDashboard' && <AdminDashboard />}
+      {tab === 'adminDashboard' && <AdminDashboard mode={dashboardMode} />}
     </>
   );
 }
@@ -2011,7 +2103,7 @@ function Profile({ user, role, onUpdatePreferences }) {
     }
   };
 
-  const roleLabel = role === 'provider' ? 'Mobility Provider' : role === 'admin' ? 'Administrator' : 'Citizen';
+  const roleLabel = roleDisplayName(role);
 
   return (
     <Section title="Profile" subtitle="Your account and preferences">
@@ -2105,4 +2197,3 @@ function useDashboardData(user) {
     refreshDashboardData,
   };
 }
-

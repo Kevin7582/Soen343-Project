@@ -474,7 +474,7 @@ export default function AdminDashboard({ mode = "overview" }) {
   const statCards = useMemo(() => {
     if (!data) return [];
 
-    return [
+    const cards = [
       {
         label: "Registered Users",
         value: data.totalUsers,
@@ -524,7 +524,21 @@ export default function AdminDashboard({ mode = "overview" }) {
         accent: "#e4a94d",
       },
     ];
-  }, [data]);
+
+    if (mode === "cityOperations") {
+      return cards.filter((card) =>
+        ["Active Rentals", "Trips Today", "Active Parking", "Fleet Utilization", "Parking Locations", "Bikes Rented", "Scooters Available"].includes(card.label)
+      );
+    }
+
+    if (mode === "systemOperations" || mode === "gatewayMonitoring") {
+      return cards.filter((card) =>
+        ["Registered Users", "Active Rentals", "Fleet Utilization", "Parking Locations"].includes(card.label)
+      );
+    }
+
+    return cards;
+  }, [data, mode]);
 
   if (loading) {
     return (
@@ -551,8 +565,12 @@ export default function AdminDashboard({ mode = "overview" }) {
   const title =
     mode === "rentalAnalytics"
       ? "Rental Analytics"
-      : mode === "gatewayMonitoring"
+    : mode === "gatewayMonitoring"
       ? "Gateway Monitoring"
+      : mode === "cityOperations"
+      ? "City Dashboard"
+      : mode === "systemOperations"
+      ? "System Dashboard"
       : "Admin Dashboard";
 
   const subtitle =
@@ -560,7 +578,15 @@ export default function AdminDashboard({ mode = "overview" }) {
       ? "Usage trends, fleet demand, and active rentals in one live view."
       : mode === "gatewayMonitoring"
       ? "Operational health, service visibility, and realtime event monitoring."
+      : mode === "cityOperations"
+      ? "City mobility demand, rentals, parking, and fleet availability."
+      : mode === "systemOperations"
+      ? "Platform health, realtime events, and system monitoring."
       : "Realtime analytics and monitoring for the SUMMS platform.";
+
+  const showCityOperations = ["overview", "rentalAnalytics", "cityOperations"].includes(mode);
+  const showSystemOperations = ["overview", "gatewayMonitoring", "systemOperations"].includes(mode);
+  const showRealtimeObserver = mode !== "cityOperations";
 
   return (
     <div style={styles.container}>
@@ -585,7 +611,7 @@ export default function AdminDashboard({ mode = "overview" }) {
         </div>
       ) : null}
 
-      <RealtimeObserverPanel />
+      {showRealtimeObserver && <RealtimeObserverPanel />}
 
       <div style={styles.statGrid}>
         {statCards.map((card) => (
@@ -593,7 +619,7 @@ export default function AdminDashboard({ mode = "overview" }) {
         ))}
       </div>
 
-      {(mode === "overview" || mode === "rentalAnalytics") && (
+      {showCityOperations && (
         <>
           <HourlyTrend rows={data.hourlyRentals} />
           <VehicleUsage usage={data.vehicleUsage} />
@@ -611,19 +637,33 @@ export default function AdminDashboard({ mode = "overview" }) {
           />
           <FleetPanel fleetStatus={data.fleetStatus} />
           <ActiveRentalsList rentals={data.activeRentals} />
+          {mode === "cityOperations" && (
+            <>
+              <CityBreakdown
+                title="Parking Reservations by City"
+                subtitle="Parking spots reserved per city area."
+                data={data.parkingByCity}
+              />
+              <ParkingTable spots={data.parkingUtilization} />
+            </>
+          )}
         </>
       )}
 
-      {(mode === "overview" || mode === "gatewayMonitoring") && (
+      {showSystemOperations && (
         <>
           <HealthPanel monitoring={data.monitoring} />
           <AlertsPanel alerts={data.alerts} />
-          <CityBreakdown
-            title="Parking Reservations by City"
-            subtitle="Parking spots reserved per city area."
-            data={data.parkingByCity}
-          />
-          <ParkingTable spots={data.parkingUtilization} />
+          {mode === "overview" && (
+            <>
+              <CityBreakdown
+                title="Parking Reservations by City"
+                subtitle="Parking spots reserved per city area."
+                data={data.parkingByCity}
+              />
+              <ParkingTable spots={data.parkingUtilization} />
+            </>
+          )}
           <EventFeed events={events} />
         </>
       )}

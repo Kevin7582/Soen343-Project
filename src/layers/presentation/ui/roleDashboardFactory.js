@@ -34,6 +34,26 @@ const ROLE_NAVIGATION = {
       profile: 'Profile',
     },
   },
+  city_admin: {
+    defaultTab: 'home',
+    tabs: ['home', 'rentalAnalytics', 'adminDashboard', 'profile'],
+    tabLabels: {
+      home: 'Home',
+      rentalAnalytics: 'Rental Analytics',
+      adminDashboard: 'City Dashboard',
+      profile: 'Profile',
+    },
+  },
+  system_admin: {
+    defaultTab: 'home',
+    tabs: ['home', 'gatewayAnalytics', 'adminDashboard', 'profile'],
+    tabLabels: {
+      home: 'Home',
+      gatewayAnalytics: 'Gateway Analytics',
+      adminDashboard: 'System Dashboard',
+      profile: 'Profile',
+    },
+  },
 };
 
 function cloneNavigationConfig(config) {
@@ -96,7 +116,29 @@ class AdminDashboardCreator extends RoleDashboardCreator {
   }
 }
 
+class CityAdminDashboardCreator extends RoleDashboardCreator {
+  createNavigationConfig() {
+    return cloneNavigationConfig(ROLE_NAVIGATION.city_admin);
+  }
+
+  createMainContent(renderers) {
+    return renderers.renderAdmin();
+  }
+}
+
+class SystemAdminDashboardCreator extends RoleDashboardCreator {
+  createNavigationConfig() {
+    return cloneNavigationConfig(ROLE_NAVIGATION.system_admin);
+  }
+
+  createMainContent(renderers) {
+    return renderers.renderAdmin();
+  }
+}
+
 export function createRoleDashboardCreator(role) {
+  if (role === 'city_admin') return new CityAdminDashboardCreator();
+  if (role === 'system_admin') return new SystemAdminDashboardCreator();
   if (role === 'admin') return new AdminDashboardCreator();
   if (role === 'provider') return new ProviderDashboardCreator();
   return new CitizenDashboardCreator();

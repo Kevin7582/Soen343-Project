@@ -3,6 +3,8 @@
 
 const STM_API_KEY = import.meta.env.VITE_STM_API_KEY || '';
 const STM_API_URL = 'https://api.stm.info/pub/od/i3/v2/messages/etatservice';
+const STM_PROXY_URL = import.meta.env.VITE_STM_PROXY_URL || '';
+const STM_SCHEDULE_API_URL = import.meta.env.VITE_STM_SCHEDULE_API_URL || '';
 
 let cache = { data: null, timestamp: 0 };
 const CACHE_TTL = 60_000; // 60 seconds
@@ -80,5 +82,54 @@ function getFallbackStatus() {
     rawAlerts: [],
     updatedAt: new Date().toISOString(),
     source: 'fallback',
+  };
+}
+
+function buildUrl(baseUrl, params = {}) {
+  if (!baseUrl) return '';
+  const url = new URL(baseUrl, window.location.origin);
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, value);
+    }
+  });
+  return url.toString();
+}
+
+export async function fetchStmSchedules({ mode = 'metro', query = '', routeId = '', stopId = '', limit = 12 } = {}) {
+  const proxyBase = STM_PROXY_URL
+    ? `${STM_PROXY_URL.replace(/\/$/, '')}/stm/schedules`
+    : '';
+  const endpoint = buildUrl(proxyBase || STM_SCHEDULE_API_URL, { mode, query, routeId, stopId, limit });
+
+  if (!endpoint) {
+    return {
+      schedules: [],
+      source: 'not-configured',
+      message: 'STM schedule feed is not connected yet. Showing live service status only.',
+      setupHint: 'Configure VITE_STM_PROXY_URL or VITE_STM_SCHEDULE_API_URL to load STM schedules.',
+    };
+  }
+
+  const res = await fetch(endpoint);
+  const payload = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    return {
+      schedules: [],
+      source: payload?.source || 'stm-schedule-unavailable',
+      message: 'STM schedule feed is temporarily unavailable. Showing live service status only.',
+      setupHint: payload?.message || payload?.error || `STM schedule request failed with ${res.status}.`,
+    };
+  }
+
+  return {
+    schedules: Array.isArray(payload?.schedules) ? payload.schedules : [],
+    source: payload?.source || 'stm-schedule-api',
+    message: payload?.message || '',
+    updatedAt: payload?.updatedAt || new Date().toISOString(),
+    gtfsUrl: payload?.gtfsUrl || '',
+    mode: payload?.mode || mode,
+    query: payload?.query || query,
   };
 }

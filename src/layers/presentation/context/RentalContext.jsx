@@ -109,16 +109,23 @@ export function RentalProvider({ children }) {
     }
   }, [reservation, user?.id]);
 
-  const endRental = useCallback(async (cost, receipt) => {
+  const endRental = useCallback(async (cost, receipt = {}) => {
     if (!activeRental) {
       throw new Error('No active rental to complete.');
+    }
+    if (!receipt.returnPlace || !receipt.returnTime) {
+      throw new Error('Return place and return time are required.');
     }
 
     setRentalLoading(true);
     setRentalError('');
 
     try {
-      const completed = await completeRental(activeRental, cost);
+      const completed = await completeRental(activeRental, cost, {
+        returnPlace: receipt.returnPlace,
+        returnTime: receipt.returnTime,
+        durationMinutes: receipt.durationMinutes,
+      });
       setActiveRental((prev) => (prev ? { ...completed, receipt } : null));
       setTimeout(() => setActiveRental(null), 100);
       return completed;

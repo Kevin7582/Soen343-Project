@@ -7,13 +7,22 @@ export const ROLES = {
   CITIZEN: 'user',
   MOBILITY_PROVIDER: 'provider',
   ADMIN: 'admin',
+  CITY_ADMIN: 'city_admin',
+  SYSTEM_ADMIN: 'system_admin',
 };
 
 const VALID_ROLES = new Set(Object.values(ROLES));
+const REGISTERABLE_ROLES = new Set([ROLES.CITIZEN, ROLES.MOBILITY_PROVIDER]);
 const LOCAL_USER_KEY = 'summs_local_user';
 
 function normalizeRole(role) {
-  return VALID_ROLES.has(role) ? role : ROLES.CITIZEN;
+  const value = String(role || '').trim().toLowerCase();
+  if (['citizen', 'customer', 'rider'].includes(value)) return ROLES.CITIZEN;
+  if (['mobility_provider', 'mobilityprovider', 'provider'].includes(value)) return ROLES.MOBILITY_PROVIDER;
+  if (['cityadmin', 'city_admin', 'city administrator', 'cityadministrator'].includes(value)) return ROLES.CITY_ADMIN;
+  if (['systemadmin', 'system_admin', 'system administrator', 'systemadministrator'].includes(value)) return ROLES.SYSTEM_ADMIN;
+  if (value === ROLES.ADMIN) return ROLES.ADMIN;
+  return VALID_ROLES.has(value) ? value : ROLES.CITIZEN;
 }
 
 function normalizeEmail(email) {
@@ -47,7 +56,7 @@ function loadLocalUser() {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed?.email || !parsed?.id) return null;
-    return parsed;
+    return { ...parsed, role: normalizeRole(parsed.role) };
   } catch {
     return null;
   }
@@ -115,6 +124,24 @@ async function updateUserRole(id, role) {
   }
 }
 
+function assertRoleDomain(row, selectedRole) {
+  const requestedRole = normalizeRole(selectedRole);
+  const accountRole = normalizeRole(row?.role);
+
+  if (accountRole === ROLES.ADMIN && [ROLES.CITY_ADMIN, ROLES.SYSTEM_ADMIN].includes(requestedRole)) {
+    return requestedRole;
+  }
+
+  if (accountRole !== requestedRole) {
+    if (accountRole === ROLES.ADMIN) {
+      throw new Error('This admin account signs in through City Admin or System Admin.');
+    }
+    throw new Error('This account belongs to a different domain. Select the matching role to sign in.');
+  }
+
+  return requestedRole;
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -152,7 +179,7 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  const login = useCallback(async (email, password) => {
+  const login = useCallback(async (email, password, selectedRole = ROLES.CITIZEN) => {
     const normalizedEmail = normalizeEmail(email);
     const row = await getUserByCredentials(normalizedEmail, password);
 
@@ -160,11 +187,13 @@ export function AuthProvider({ children }) {
       throw new Error('Invalid username or password.');
     }
 
+    const sessionRole = assertRoleDomain(row, selectedRole);
+
     const appUser = makeAppUser({
       id: row.id,
       email: normalizedEmail,
       name: row.name || '',
-      role: row.role,
+      role: sessionRole,
       token: 'users-table-session',
       source: 'users_table',
       preferredCity: row.preferred_city || '',
@@ -176,7 +205,8 @@ export function AuthProvider({ children }) {
   }, [setLocalUser]);
 
   const register = useCallback(async (name, email, password, role = ROLES.CITIZEN) => {
-    if (normalizeRole(role) === ROLES.ADMIN) {
+    const normalizedRole = normalizeRole(role);
+    if (!REGISTERABLE_ROLES.has(normalizedRole)) {
       throw new Error('Admin accounts cannot be created through registration. Contact a system administrator.');
     }
 
@@ -189,18 +219,20 @@ export function AuthProvider({ children }) {
         name,
         email: normalizedEmail,
         password,
-        role,
+        role: normalizedRole,
       });
     } else {
-      await updateUserRole(existing.id, role);
-      row = { ...existing, role: normalizeRole(role) };
+      if (normalizeRole(existing.role) !== normalizedRole) {
+        throw new Error('This email already belongs to a different account domain. Sign in with the matching role.');
+      }
+      row = existing;
     }
 
     const appUser = makeAppUser({
       id: row.id,
       email: normalizedEmail,
       name: String(name || '').trim(),
-      role: row.role,
+      role: normalizedRole,
       token: 'users-table-session',
       source: 'users_table',
     });
@@ -258,7 +290,7 @@ export function AuthProvider({ children }) {
     isAuthenticated: Boolean(user),
     isCitizen: user?.role === ROLES.CITIZEN,
     isProvider: user?.role === ROLES.MOBILITY_PROVIDER,
-    isAdmin: user?.role === ROLES.ADMIN,
+    isAdmin: [ROLES.ADMIN, ROLES.CITY_ADMIN, ROLES.SYSTEM_ADMIN].includes(user?.role),
   }), [user, authLoading, login, register, logout, resetPassword, updatePreferences]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
