@@ -55,6 +55,8 @@ function mapReservationRow(row, vehicle) {
     vehicleId: String(row.vehicle_id ?? fallbackVehicle.id ?? ''),
     status: 'reserved',
     reservedAt: row.created_at ?? new Date().toISOString(),
+    plannedDurationMinutes: Number(row.planned_duration_minutes ?? 0),
+    plannedReturnPlace: row.planned_return_place ?? '',
     vehicle: fallbackVehicle,
     localOnly: false,
   };
@@ -74,6 +76,9 @@ function mapRentalRow(row, vehicle) {
     status: row.status ?? 'active',
     startTime: row.start_time ?? row.created_at ?? new Date().toISOString(),
     endTime: row.end_time ?? null,
+    returnPlace: row.return_place ?? row.return_location ?? '',
+    returnTime: row.return_time ?? row.end_time ?? null,
+    durationMinutes: Number(row.rental_duration_minutes ?? 0),
     paymentTxId: '',
     cost: Number(row.price ?? 0),
     vehicle: fallbackVehicle,
@@ -227,7 +232,7 @@ export async function fetchUserActiveRental(userId) {
   return mapRentalRow(data, vehicle);
 }
 
-export async function reserveVehicle(userId, vehicle) {
+export async function reserveVehicle(userId, vehicle, planning = {}) {
   const [{ data: userOpenRentals }, { data: vehicleOpenRentals }] = await Promise.all([
     supabase
       .from('rentals')
@@ -258,8 +263,20 @@ export async function reserveVehicle(userId, vehicle) {
     payment_status: 'pending',
     price: 0,
   };
+  const extendedPayload = {
+    ...payload,
+    planned_duration_minutes: Number(planning.plannedDurationMinutes || 0),
+    planned_return_place: String(planning.plannedReturnPlace || '').trim(),
+  };
 
-  const { data, error } = await supabase.from('rentals').insert(payload).select('*').single();
+  let { data, error } = await supabase.from('rentals').insert(extendedPayload).select('*').single();
+
+  if (error) {
+    fallbackWarn('reserve vehicle planned details', error);
+    const retry = await supabase.from('rentals').insert(payload).select('*').single();
+    data = retry.data;
+    error = retry.error;
+  }
 
   if (error) {
     fallbackWarn('reserve vehicle', error);
@@ -269,6 +286,8 @@ export async function reserveVehicle(userId, vehicle) {
       vehicleId: String(vehicle.id),
       status: 'reserved',
       reservedAt: new Date().toISOString(),
+      plannedDurationMinutes: Number(planning.plannedDurationMinutes || 0),
+      plannedReturnPlace: String(planning.plannedReturnPlace || '').trim(),
       vehicle,
       localOnly: true,
     };
@@ -351,26 +370,57 @@ export async function startRental(userId, reservation) {
   return mapRentalRow(data, reservation.vehicle);
 }
 
-export async function completeRental(activeRental, cost) {
+export async function completeRental(activeRental, cost, returnDetails = {}) {
   if (!activeRental) return null;
 
-  const endTime = new Date().toISOString();
+  const endTime = returnDetails.returnTime || new Date().toISOString();
+  const returnPlace = String(returnDetails.returnPlace || '').trim();
   const safeCost = Number(cost ?? 0);
+  const startMs = new Date(activeRental.startTime).getTime();
+  const endMs = new Date(endTime).getTime();
+  const computedDurationMinutes = Number.isFinite(startMs) && Number.isFinite(endMs)
+    ? Math.max(1, Math.floor((endMs - startMs) / 60000))
+    : 1;
+  const durationMinutes = Number.isFinite(Number(returnDetails.durationMinutes))
+    ? Math.max(1, Number(returnDetails.durationMinutes))
+    : computedDurationMinutes;
+
+  if (!returnPlace) {
+    throw new Error('Return place is required.');
+  }
 
   if (!activeRental.localOnly) {
-    const { error } = await supabase
+    const basePayload = {
+      status: 'completed',
+      payment_status: 'paid',
+      end_time: endTime,
+      price: safeCost,
+    };
+    const extendedPayload = {
+      ...basePayload,
+      return_place: returnPlace,
+      return_time: endTime,
+      rental_duration_minutes: durationMinutes,
+    };
+
+    let { error } = await supabase
       .from('rentals')
-      .update({
-        status: 'completed',
-        payment_status: 'paid',
-        end_time: endTime,
-        price: safeCost,
-      })
+      .update(extendedPayload)
       .eq('id', activeRental.id)
       .eq('status', 'active');
 
     if (error) {
       fallbackWarn('complete rental', error);
+      const retry = await supabase
+        .from('rentals')
+        .update(basePayload)
+        .eq('id', activeRental.id)
+        .eq('status', 'active');
+      error = retry.error;
+    }
+
+    if (error) {
+      throw new Error(`Unable to complete rental: ${error.message}`);
     }
 
     await setVehicleOccupied(activeRental.vehicleId, false);
@@ -380,6 +430,9 @@ export async function completeRental(activeRental, cost) {
     ...activeRental,
     status: 'completed',
     endTime,
+    returnPlace,
+    returnTime: endTime,
+    durationMinutes,
     cost: safeCost,
   };
 }

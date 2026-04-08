@@ -1080,6 +1080,71 @@ label {
 
 .transit-plan-row p { margin: 0; }
 
+.transit-schedule-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.transit-schedule-row {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.02);
+}
+
+.transit-schedule-route {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-size: 0.76rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.transit-schedule-route.is-metro {
+  color: #67e8f9;
+  background: rgba(56,189,248,0.12);
+}
+
+.transit-schedule-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.transit-schedule-main strong {
+  color: var(--text);
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transit-schedule-main span {
+  color: var(--text-3);
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transit-schedule-time {
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 800;
+  font-family: var(--font-display);
+}
+
 /* ── Responsive ── */
 @media (max-width: 900px) {
   .dashboard { grid-template-columns: 1fr; }
@@ -1138,6 +1203,7 @@ label {
   }
 
   .transit-sidepanel { max-height: none; }
+  .transit-schedule-row { grid-template-columns: 70px minmax(0, 1fr) auto; }
 }
 
 /* ── Keyframe Animations ── */
