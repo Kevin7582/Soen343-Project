@@ -202,6 +202,8 @@ function Dashboard() {
   const [radius, setRadius] = useState('2');
   const [paymentDone, setPaymentDone] = useState(false);
   const [showPaymentGate, setShowPaymentGate] = useState(false);
+  const [reservationDraft, setReservationDraft] = useState(null);
+  const [showReservationPlanner, setShowReservationPlanner] = useState(false);
   const [parkingReservation, setParkingReservation] = useState(null);
   const [parkingDuration, setParkingDuration] = useState('1');
   const [returnPlace, setReturnPlace] = useState('');
@@ -270,10 +272,18 @@ function Dashboard() {
     }
     clearError();
     setMobilityError('');
+    setReservationDraft(vehicle);
+    setShowReservationPlanner(true);
+  };
+
+  const confirmReserveVehicle = async ({ plannedDurationMinutes, plannedReturnPlace }) => {
+    if (!reservationDraft) return;
     try {
-      await reserveVehicle(vehicle);
+      await reserveVehicle(reservationDraft, { plannedDurationMinutes, plannedReturnPlace });
       await refreshDashboardData();
-      setTab('search');
+      setTab('activeRental');
+      setShowReservationPlanner(false);
+      setReservationDraft(null);
     } catch {
       // Error is shown from context state.
     }
@@ -483,6 +493,93 @@ function Dashboard() {
           onCancel={() => setShowPaymentGate(false)}
         />
       )}
+
+      {showReservationPlanner && (
+        <ReservationPlanner
+          vehicle={reservationDraft}
+          onConfirm={confirmReserveVehicle}
+          onCancel={() => {
+            setShowReservationPlanner(false);
+            setReservationDraft(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ReservationPlanner({ vehicle, onConfirm, onCancel }) {
+  const [plannedDurationMinutes, setPlannedDurationMinutes] = useState('30');
+  const [plannedReturnPlace, setPlannedReturnPlace] = useState('');
+
+  const handleSubmit = (event) => {
+    event.preventDefault();
+    const duration = Math.max(5, Number(plannedDurationMinutes) || 0);
+    const returnPlace = plannedReturnPlace.trim();
+    if (!returnPlace) return;
+    onConfirm({
+      plannedDurationMinutes: duration,
+      plannedReturnPlace: returnPlace,
+    });
+  };
+
+  const estimatedCost = Math.max(5, Number(plannedDurationMinutes) || 0) * Number(vehicle?.ratePerMin ?? 0.25);
+
+  return (
+    <div style={paymentStyles.overlay}>
+      <div style={paymentStyles.modal} className="fade-up">
+        <div style={paymentStyles.header}>
+          <div>
+            <div style={paymentStyles.brand}>Plan Your Ride</div>
+            <p style={paymentStyles.headerSub}>Confirm your planned duration and return location before reserving.</p>
+          </div>
+          <button style={paymentStyles.closeBtn} onClick={onCancel}>&times;</button>
+        </div>
+
+        <div style={paymentStyles.orderSummary}>
+          <p style={{ color: 'var(--text)', fontWeight: 600, margin: 0 }}>{vehicle?.name || 'Vehicle reservation'}</p>
+          <p style={{ color: 'var(--text-3)', fontSize: '0.82rem', margin: '2px 0 0' }}>{vehicle?.type || 'vehicle'} &mdash; ${vehicle?.ratePerMin ?? 0.25}/min</p>
+        </div>
+
+        <form onSubmit={handleSubmit} style={paymentStyles.form}>
+          <div style={paymentStyles.field}>
+            <label style={paymentStyles.label}>Planned usage duration (minutes)</label>
+            <input
+              style={paymentStyles.input}
+              value={plannedDurationMinutes}
+              onChange={(event) => setPlannedDurationMinutes(event.target.value.replace(/\D/g, '').slice(0, 4))}
+              placeholder="30"
+            />
+          </div>
+
+          <div style={paymentStyles.field}>
+            <label style={paymentStyles.label}>Intended return location</label>
+            <input
+              style={paymentStyles.input}
+              value={plannedReturnPlace}
+              onChange={(event) => setPlannedReturnPlace(event.target.value)}
+              placeholder="Station, parking zone, or address"
+              autoFocus
+            />
+          </div>
+
+          <div style={{ color: 'var(--text-2)', fontSize: '0.85rem' }}>
+            Estimated cost: <strong>${estimatedCost.toFixed(2)}</strong>
+          </div>
+
+          <button
+            type="submit"
+            disabled={!plannedReturnPlace.trim()}
+            style={{
+              ...paymentStyles.payBtn,
+              opacity: plannedReturnPlace.trim() ? 1 : 0.5,
+              cursor: plannedReturnPlace.trim() ? 'pointer' : 'not-allowed',
+            }}
+          >
+            Confirm Reservation
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
@@ -946,6 +1043,10 @@ function CitizenViews({
                 <span className="status-pill is-reserved">Reserved</span>
               </div>
               <p style={{ color: 'var(--text-2)' }}>{reservation.vehicle?.name || `Vehicle #${reservation.vehicleId}`} &mdash; {reservation.vehicle?.type || 'vehicle'}</p>
+              <div className="vehicle-card-meta">
+                {reservation.plannedDurationMinutes > 0 && <span>Planned {reservation.plannedDurationMinutes} min</span>}
+                {reservation.plannedReturnPlace && <span>Return to {reservation.plannedReturnPlace}</span>}
+              </div>
               <p style={{ color: 'var(--text-3)', fontSize: '0.85rem' }}>Tap below to confirm payment and start your rental.</p>
               <button className="btn btn-primary" style={{ width: 'fit-content' }} onClick={onProceedPayment}>Confirm &amp; Start Rental</button>
             </div>
@@ -1196,6 +1297,10 @@ function MobilityPage({ user, vehicleType, setVehicleType, radius, setRadius, ve
             <span className="status-pill is-reserved">Reserved</span>
           </div>
           <p style={{ color: 'var(--text-2)' }}>{reservation.vehicle?.type} &mdash; ${reservation.vehicle?.ratePerMin ?? 0.25}/min</p>
+          <div className="vehicle-card-meta">
+            {reservation.plannedDurationMinutes > 0 && <span>Planned {reservation.plannedDurationMinutes} min</span>}
+            {reservation.plannedReturnPlace && <span>Return to {reservation.plannedReturnPlace}</span>}
+          </div>
           <div className="row gap-8">
             <button className="btn btn-primary" onClick={onProceedPayment}>Confirm &amp; Start Rental</button>
             <button className="btn btn-soft" onClick={onCancelReservation}>Cancel</button>

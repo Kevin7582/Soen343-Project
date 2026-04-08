@@ -55,6 +55,8 @@ function mapReservationRow(row, vehicle) {
     vehicleId: String(row.vehicle_id ?? fallbackVehicle.id ?? ''),
     status: 'reserved',
     reservedAt: row.created_at ?? new Date().toISOString(),
+    plannedDurationMinutes: Number(row.planned_duration_minutes ?? 0),
+    plannedReturnPlace: row.planned_return_place ?? '',
     vehicle: fallbackVehicle,
     localOnly: false,
   };
@@ -230,7 +232,7 @@ export async function fetchUserActiveRental(userId) {
   return mapRentalRow(data, vehicle);
 }
 
-export async function reserveVehicle(userId, vehicle) {
+export async function reserveVehicle(userId, vehicle, planning = {}) {
   const [{ data: userOpenRentals }, { data: vehicleOpenRentals }] = await Promise.all([
     supabase
       .from('rentals')
@@ -261,8 +263,20 @@ export async function reserveVehicle(userId, vehicle) {
     payment_status: 'pending',
     price: 0,
   };
+  const extendedPayload = {
+    ...payload,
+    planned_duration_minutes: Number(planning.plannedDurationMinutes || 0),
+    planned_return_place: String(planning.plannedReturnPlace || '').trim(),
+  };
 
-  const { data, error } = await supabase.from('rentals').insert(payload).select('*').single();
+  let { data, error } = await supabase.from('rentals').insert(extendedPayload).select('*').single();
+
+  if (error) {
+    fallbackWarn('reserve vehicle planned details', error);
+    const retry = await supabase.from('rentals').insert(payload).select('*').single();
+    data = retry.data;
+    error = retry.error;
+  }
 
   if (error) {
     fallbackWarn('reserve vehicle', error);
@@ -272,6 +286,8 @@ export async function reserveVehicle(userId, vehicle) {
       vehicleId: String(vehicle.id),
       status: 'reserved',
       reservedAt: new Date().toISOString(),
+      plannedDurationMinutes: Number(planning.plannedDurationMinutes || 0),
+      plannedReturnPlace: String(planning.plannedReturnPlace || '').trim(),
       vehicle,
       localOnly: true,
     };

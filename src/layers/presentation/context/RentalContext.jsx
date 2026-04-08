@@ -48,7 +48,7 @@ export function RentalProvider({ children }) {
     loadRentalState();
   }, [loadRentalState]);
 
-  const reserveVehicle = useCallback(async (vehicle) => {
+  const reserveVehicle = useCallback(async (vehicle, planning) => {
     if (!user?.id) {
       throw new Error('Please log in first.');
     }
@@ -60,7 +60,7 @@ export function RentalProvider({ children }) {
       if (activeRental || reservation) {
         throw new Error('You can only reserve one vehicle at a time.');
       }
-      const dbReservation = await reserveVehicleInService(user.id, vehicle);
+      const dbReservation = await reserveVehicleInService(user.id, vehicle, planning);
       setReservation(dbReservation);
       return dbReservation;
     } catch (error) {
