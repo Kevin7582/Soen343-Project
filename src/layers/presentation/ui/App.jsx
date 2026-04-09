@@ -1374,6 +1374,12 @@ function TransitStatusPage() {
   const [scheduleMode, setScheduleMode] = useState('metro');
   const [loading, setLoading] = useState(true);
   const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [startPoint, setStartPoint] = useState(null);
+  const [endPoint, setEndPoint] = useState(null);
+  const [transitFrom, setTransitFrom] = useState('');
+  const [transitTo, setTransitTo] = useState('');
+  const [travelMode, setTravelMode] = useState('TRANSIT');
+  const [routeInfo, setRouteInfo] = useState(null);
 
   useEffect(() => {
     let mounted = true;
@@ -1427,6 +1433,30 @@ function TransitStatusPage() {
 
       {!loading && (
         <>
+          <div className="panel stack-12 fade-up">
+            <div>
+              <h3 style={{ marginBottom: 6 }}>Trip Planner</h3>
+              <p style={{ color: 'var(--text-2)', margin: 0, fontSize: '0.88rem' }}>
+                Plan a route by choosing origin and destination, then use the live transit panels below for STM schedules and service status.
+              </p>
+            </div>
+
+            <TransitMap
+              startPoint={startPoint}
+              endPoint={endPoint}
+              onSetStartPoint={setStartPoint}
+              onSetEndPoint={setEndPoint}
+              transitFrom={transitFrom}
+              transitTo={transitTo}
+              onSetTransitFrom={setTransitFrom}
+              onSetTransitTo={setTransitTo}
+              travelMode={travelMode}
+              onSetTravelMode={setTravelMode}
+              routeInfo={routeInfo}
+              onRouteInfoChange={setRouteInfo}
+            />
+          </div>
+
           {/* Summary stats */}
           <div className="stat-row fade-up">
             <div className="stat-badge">
