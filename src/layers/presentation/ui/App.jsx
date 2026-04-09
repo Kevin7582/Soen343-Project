@@ -24,6 +24,7 @@ import {
 } from '../../service-layer/mobilityService';
 import VehicleMap from './VehicleMap';
 import ParkingMap from './ParkingMap';
+import SummsAssistantChat from './SummsAssistantChat';
 
 export default function App() {
   return (
@@ -46,7 +47,12 @@ function Root() {
     );
   }
 
-  return <div className="app-shell">{isAuthenticated ? <Dashboard /> : <AuthScreen />}</div>;
+  return (
+    <div className="app-shell">
+      {isAuthenticated ? <Dashboard /> : <AuthScreen />}
+      <SummsAssistantChat />
+    </div>
+  );
 }
 
 function AuthScreen() {
